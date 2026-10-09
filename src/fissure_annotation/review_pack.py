@@ -14,6 +14,9 @@ from PIL import Image, ImageDraw
 from fissure_annotation.agent import MODEL, run_agent
 from fissure_annotation.experiment import draw_model_lines
 from fissure_annotation.picker import best_in
+from fissure_annotation.config import RunConfig
+from fissure_annotation.scroll_agent import run_scroll
+from fissure_annotation.side_agent import run_side
 from fissure_annotation.slicing import cut, load_case
 
 AXIS = {"axial": 2, "coronal": 1}
@@ -38,25 +41,48 @@ def side_by_side(clean: Image.Image, outlined: Image.Image, title: str) -> Image
     return out
 
 
-def run_slice(case, plane: str, idx: int, out_dir: Path, model: str) -> dict:
-    r = run_agent(cut(case, plane, idx), model, out_dir / "logs" / f"{plane}_{idx:04d}")
-    sl = r["slice"]
+def run_slice(case, plane: str, idx: int, out_dir: Path, model: str, scroll: bool = False, use_tracer: bool = True) -> dict:
+    log = out_dir / "logs" / f"{plane}_{idx:04d}"
+    if scroll:
+        r = run_scroll(case, RunConfig(plane=plane, start=idx, model=model, use_tracer=use_tracer), log)
+        sl, visited = r["stack"].get(idx), r["visited"]
+        title_extra = f"; scrolled through slices {visited}" + ("" if use_tracer else "; no tracer, points checked with check_points")
+    else:
+        r = run_agent(cut(case, plane, idx), model, log)
+        sl, visited, title_extra = r["slice"], [idx], ""
     n = len(r["fissures"])
     side_by_side(sl.main, draw_model_lines(sl.main, r["fissures"]),
-                 f"{plane} slice {idx}: left = lung crop, right = agent's lines ({n}); red = clear, yellow = faint").save(out_dir / f"{plane}_{idx:04d}.png")
+                 f"{plane} slice {idx}: left = lung crop, right = agent's lines ({n}); red = clear, yellow = faint{title_extra}").save(out_dir / f"{plane}_{idx:04d}.png")
     return {"slice": f"{plane}_{idx:04d}", "fissures": [{k: f[k] for k in ("name", "side", "confidence", "evidence", "geometry")} for f in r["fissures"]],
-            "steps": r["steps"]}
+            "steps": r["steps"], "slices_visited": visited}
+
+
+def run_slice_sides(case, plane: str, idx: int, out_dir: Path, model: str) -> dict:
+    "the one-lung agents: one image per lung, each the half-lung crop the agent saw beside the same crop with its lines"
+    cfgs = {side: RunConfig(plane=plane, start=idx, sides=(side,), model=model) for side in ("right", "left")}
+    with ThreadPoolExecutor(2) as ex:
+        runs = dict(zip(cfgs, ex.map(lambda s: run_side(case, cfgs[s], out_dir / "logs" / f"{plane}_{idx:04d}_{s}"), cfgs)))
+    summary = {"slice": f"{plane}_{idx:04d}"}
+    for side, r in runs.items():
+        sl = r["stack"].get(side, idx)
+        side_by_side(sl.main, draw_model_lines(sl.main, r["fissures"]),
+                     f"{plane} slice {idx}, {side} lung only: left = lung crop, right = agent's lines ({len(r['fissures'])}); red = clear, yellow = faint; scrolled through slices {r['visited']}"
+                     ).save(out_dir / f"{plane}_{idx:04d}_{side}.png")
+        summary[side] = {"fissures": [{k: f[k] for k in ("name", "side", "confidence", "evidence", "geometry")} for f in r["fissures"]],
+                         "steps": r["steps"], "slices_visited": r["visited"]}
+    return summary
 
 
 def main():
-    "review_pack <scan.nii.gz> <lobe_dir> <out_dir> [model]"
+    "review_pack <scan.nii.gz> <lobe_dir> <out_dir> [model] [scroll|side] [notracer]"
     scan, lobe_dir, out_dir = sys.argv[1], sys.argv[2], Path(sys.argv[3])
-    model = sys.argv[4] if len(sys.argv) > 4 else MODEL
+    model = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] not in ("scroll", "side", "notracer") else MODEL
+    scroll, sides, use_tracer = "scroll" in sys.argv[4:], "side" in sys.argv[4:], "notracer" not in sys.argv[4:]
     out_dir.mkdir(parents=True, exist_ok=True)
     case = load_case(scan, lobe_dir)
     picks = quarter_picks(case)
     with ThreadPoolExecutor(4) as ex:
-        results = list(ex.map(lambda p: run_slice(case, p[0], p[1], out_dir, model), picks))
+        results = list(ex.map(lambda p: run_slice_sides(case, p[0], p[1], out_dir, model) if sides else run_slice(case, p[0], p[1], out_dir, model, scroll, use_tracer), picks))
     (out_dir / "summary.json").write_text(json.dumps(results, indent=1))
     print(json.dumps(results, indent=1))
 

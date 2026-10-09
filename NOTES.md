@@ -116,3 +116,124 @@ Scan agent against one-shot E on the slices it traced (blinded pairs, two review
 - Cost: 400-800k input tokens and 25-36 steps per scan (images are resent each turn).
 
 Caveats: 5 scans, no ground truth, LLM reviewers on downscaled panels (their on-fissure shares differ by up to ~15 points); no scan with a genuinely absent fissure; the review packs (`review/scan2_agent*/`) are for eyeballing, not accuracy.
+
+## Round 5: scrolling (`scroll_agent.py`, `prompts/fissure_scroll_agent.txt`)
+
+The model is told its start slice, the valid lung range of the plane and the mm per slice step, and can act on any slice of that plane: `look`, `zoom`, `snap` and `overlay` all REQUIRE `slice` (no hidden "current slice"). A slice number outside the lung range, or not an integer, is rejected with the valid range and the nearest valid slice, and nothing is done (clamping was rejected because a snap could silently land on a slice the model did not ask for). Every tool takes `completed`: `with_lines` returns the full slice as it would be submitted with every line traced on it, `clean` returns it without lines.
+
+Mechanics that make scrolling meaningful: all slices of a plane share one crop box (union of their lung boxes), so a 0-1000 position and a zoomed view mean the same anatomy on every slice (a view made on slice 150 works unchanged on 160); view ids and line ids are global; each run gets its own stack (an early version shared one stack between parallel runs, which would have mixed agents' lines).
+
+Use by the model (20 slices): 67 of 238 tool calls were on a slice other than the start slice (34 `look` calls), 2-5 distinct slices visited per run, `completed` used 15 times (all `with_lines`, typically one last overlay of the whole slice before `submit`), no rejected slice numbers, 5.7 steps and ~71k input tokens per run. It never traced lines on any slice other than the start slice; scrolling was used for looking, not for building references.
+
+Blinded 3-way (20 slices, two reviewers, unblinded by key; ON % of lines / NEAR / NOT / missed / ranked first or tied):
+- one-shot E: 68, 61 % / 10, 16 / 4, 1 / 2, 1 / 8, 10
+- agent with views, no scrolling: 74, 80 % / 7, 5 / 5, 4 / 2, 0 / 11, 14
+- agent with scrolling: 80, 84 % / 6, 4 / 3, 3 / 1, 1 / 16, 16
+Both reviewers agree on the direction; the margin over the no-scrolling agent is small. Caveat: the scrolling agent's panel uses the shared crop, so its framing differs slightly from the other two.
+
+## Round 6: one lung per run (`side_agent.py`, `config.py`, `prompts/fissure_side_agent.txt`)
+
+Settings now live in a `RunConfig` dataclass (plane, start slice, allowed sides, model, limits). Every tool requires `slice` and `side` (validated against `config.sides`; a wrong side, a non-integer or out-of-range slice is rejected with what is valid and nothing is done; a horizontal fissure on the left lung is refused). `side` restricts the crop (that lung's lobes only, shared per side across slices), the lobe hint image and legend, the slice range, and the ridge tracer to that lung. Each of the 20 slices ran twice (right lung agent, left lung agent) and the lines were merged onto the usual full-lung panel.
+
+Behaviour (40 runs): 6.8 steps and ~57k input tokens per run (so ~114k per slice, vs ~71k for one both-lung run), 2.4 other slices visited per run, 0 rejected calls, `completed: with_lines` used 33 times.
+
+Blinded 3-way (20 slices, two reviewers, unblinded by key; ON % / NEAR / NOT / missed / ranked first or tied):
+- one-shot E: 64, 55 % / 14, 19 / 2, 1 / 0, 0 / 13, 11
+- scrolling agent, both lungs in one run: 77, 73 % / 7, 9 / 3, 3 / 2, 1 / 12, 14
+- scrolling agent, one lung per run: 77, 68 % / 5, 10 / 6, 5 / 0, 0 / 15, 14
+Result: no clear accuracy gain from one lung per run. Placement (ON %) is level with the both-lung run, misses are lower (0 vs 2 and 1), but non-fissure lines roughly doubled (6 and 5 vs 3 and 3), and it costs about 1.6x the tokens. Untested guess: a run told to annotate one lung feels pushed to produce something and adds doubtful lines, especially on the left lung where the fissure is faint.
+
+### Decision after round 6
+
+Half-lung (one lung per run) framing is not pursued for now: it was level with the both-lung scrolling agent on placement, missed fewer fissures, drew about twice as many non-fissure lines, and cost ~1.6x the tokens. Work continues on the full-lung scrolling agent (`scroll_agent.py`). `side_agent.py`, `config.py` (RunConfig) and the half-lung review pack option are kept in the tree for later but unused. Plausible reasons the crop made little difference (untested): the agent already works in zoomed views, so the starting crop matters little; the two-lung crop was already handled lung by lung; telling a run to annotate one lung may push it to produce lines. A narrower focus, one fissure per run ("only the right horizontal"), with "none visible" an expected answer, is an untested alternative.
+
+## Round 7: scrolling agent with the tracer switched off (`RunConfig.use_tracer=False`)
+
+Flag: `RunConfig.use_tracer` (default True; CLI `scroll_agent ... --no-tracer`). Off means the model never learns of a tracer: `snap` becomes `mark` (waypoints joined by straight segments; the picture returned shows the line with a circle at each point), no fit numbers, `submit` has no `geometry` field, the prompt (`prompts/fissure_scroll_agent_notracer.txt`) has no tracer vocabulary, and the ridge map is not even computed. Because the straight segments are now the whole line, `mark` allows up to 20 points (snap allowed 8, the prompt said 2-6), and the prompt says to add a point at every bend and to check each circle sits on the line. Code size: about 90 lines changed plus the prompt file.
+
+Behaviour (20 slices, no errors): 52 `mark` calls with 8.3 points on average (min 5, max 14; 45 of 52 used more than 6), 6.2 steps and ~74k input tokens per run. Two runs ended after an `overlay` without calling `submit` (737302 axial 257, 90203 axial 214); the fallback keeps their lines as `uncertain`. The tracer version submitted in all 20.
+
+Blinded 3-way (20 slices, two reviewers, unblinded; ON % / NEAR / NOT / missed / ranked first or tied):
+- one-shot E: 61, 64 % / 15, 13 / 2, 3 / 1, 1 / 9, 9
+- scrolling agent with tracer (same run as round 5): 91, 86 % / 2, 3 / 2, 3 / 1, 1 / 17, 16
+- scrolling agent without tracer: 70, 79 % / 7, 4 / 7, 6 / 2, 1 / 8, 12
+Result: switching the tracer off did not help; placement is lower and non-fissure lines are higher (7 and 6 vs 2 and 3). Both agents beat one-shot E. Confounds: the no-tracer run also used more points and a different prompt and had two runs without submit; the tracer agent scored 80 / 84 % in an earlier review of the same outputs, so reviewer variance is a few points; 20 slices, no ground truth. One reading (untested): the tracer's feedback (picture of where the ridge is, shift numbers) acts as a pointing check even though 80% of kept lines were the model's own waypoints, and nothing replaces that when it is removed. That supports giving the model a pointing check (`refine_points`) instead of removing the measurement.
+
+Fixed afterwards: the tool list sent `submit` twice (from the TOOLS loop and a second append); earlier runs had the duplicate too.
+
+## Round 8: `check_points` and no waypoint cap (tracer off)
+
+`check_points(slice, waypoints, view_id?, connect?, completed?)` (scrolling agent, both modes): previews where waypoints land in the frame of a view, as numbered rings beside the clean view, and stores nothing; the prompt tells the model to move any point whose ring is off the thin line and check again before calling `mark` (or `snap`). The cap on waypoints is gone from the `snap`/`mark`/`check_points` schemas and from the scroll prompts ("as many as the line needs, at least 2"); the older slice-agent and scan-agent prompts still say 2-6.
+
+Behaviour (no tracer, 20 slices, no errors): all 20 runs used `check_points` (53 calls, 2.6 per run) and marked afterwards; all 20 submitted (round 7 had 2 runs without submit); 125 zooms, 47 `mark` calls with 8.0 points on average (min 5, max 12); 7.0 steps and ~99k input tokens per run (round 7 no-tracer: 74k).
+
+Blinded 3-way (20 slices, two reviewers, unblinded; ON % of lines / NEAR / NOT / missed / ranked first or tied):
+- scrolling agent with tracer (round 5 outputs): 77, 86 % / 7, 5 / 3, 1 / 1, 2 / 15, 16
+- no tracer, `mark` only (round 7 outputs): 65, 77 % / 9, 6 / 8, 5 / 1, 2 / 9, 11
+- no tracer + `check_points`, no cap: 78, 84 % / 5, 5 / 5, 2 / 2, 2 / 14, 14
+Reading: with a pointing check the no-tracer agent reaches the tracer agent's level (78 / 84 vs 77 / 86 % on a fissure) and is clearly above the no-tracer agent without it (65 / 77 %); it still draws slightly more non-fissure lines (5 and 2 vs 3 and 1) and costs ~33% more tokens than the round-7 no-tracer runs. Differences between the first and third rows are a couple of lines out of 45 and within reviewer noise; the outputs of the tracer agent were not rerun, and the same outputs scored differently in earlier reviews (80 / 84, 91 / 86). Confounds: the no-tracer rows also differ in point cap and prompt. 20 slices, no ground truth.
+
+So the tracer is not needed for this level of placement; the useful ingredient seems to be a way for the model to see where its points are. A numeric pointing check (nearest ridge offset per point) is still untried.
+
+## Round 9: one tool call per turn, one fissure at a time (tracer off, check_points, scrolling)
+
+Before the change (round-8 outputs, no tracer): 62% of turns made more than one tool call (mean 2.0, max 4); 46 turns made several zooms; in 9 turns `check_points` and `mark` were issued together, so that `mark` could not use the check; 33 of 62 marks differed from the last `check_points` on that view (edited without being re-checked); only 16 re-checks of the same slice and view in 28 runs; ~2.35 marks per run for ~2.25 final lines (almost no redo after `mark`). Line ends (90, from the lobe masks): none outside the lung by more than 3 mm, 45 within 3 mm of the lung boundary, 23 at 3-10 mm inside, 22 more than 10 mm inside; only 6 of 94 mark ends within 40 units of the view-frame edge, so running out of the zoom frame is not the main edge problem.
+
+Change: `RunConfig.one_call_per_turn` (default True): the request asks the API for `parallel_tool_calls=False`, and the code runs only the first call of a turn and answers the rest "skipped" (it never had to: 0 skipped, so the API honoured the request). Prompts (both scroll prompts) gain a "Working order" section: one call at a time, read the check before marking, one fissure at a time and finish it before starting the next. Turn cap raised to 125 for the run (`scroll_agent ... --max-steps 125`).
+
+Behaviour (20 slices): turns per run 7-21 (mean 15.2, median 15.5), so the old cap of 24 would have been enough for all (just); all 20 submitted; exactly 1 call per turn; ~166k input tokens per run (parallel run: ~99k); 6.2 zooms, 2.4 `check_points`, 2.2 marks (9.3 points on average, max 12) per run; only 3 re-checks of the same slice and view; marks: 29 exactly the last check, 15 edited since the last check, 0 without a check (was 33 of 62 edited).
+
+Blinded 3-way (20 slices, two reviewers, now also counting lines with clearly wrong ends; ON % / NEAR / NOT / missed / bad ends / ranked first or tied):
+- with tracer, parallel calls: 82, 89 % / 6, 3 / 2, 2 / 3, 1 / 1, 3 / 14, 12
+- no tracer, parallel calls: 82, 87 % / 6, 3 / 2, 3 / 2, 1 / 1, 0 / 13, 13
+- no tracer, one call at a time: 80, 89 % / 6, 3 / 3, 2 / 3, 2 / 5, 1 / 9, 15
+Result: no improvement from one-call-per-turn and one-fissure-at-a-time. Placement is level, misses are a little higher, reviewer 1 counted more bad ends (5 vs 1; reviewer 2: 1 vs 0), and it costs about 1.7x the input tokens and twice the turns. Bad ends are rare overall (1 to 5 lines of ~44 in every method). The check→edit→check loop is still rare (3 re-checks). Next untested ideas: tracing a fissure in sequential segments (needs an `append` option on `mark`), and a numeric pointing check.
+
+## Round 10: end rule and no-interpolation rule
+
+The medial end of a left-lung line on axial slice 363 (round 8 run) was traced along the lobe-segmentation boundary through grey lung with no visible line: points 1-4 sat exactly on the (imperfect) lobe boundary hint, and rings 7-9 on the right sat 20-30 units below the visible bright band (the pointing offset). `check_points` shows where points are, not whether a line is under them, so the model passed its own check. `review/mechanics/` has the high-contrast overlay examples (check_points picture; the same view with lobe boundaries; an end zoom). At a 4x end zoom, high contrast turns the lung into blurry mottled texture and the lobe overlay is blocky (it is drawn at mask resolution), so a close high-contrast zoom does not make "is there a line here" easy.
+
+Prompt rules added (both scroll prompts): every end point must sit on a visible part of the line (move an end inward rather than extend toward the pleura or hilum); do not interpolate (no line across a stretch where the fissure cannot be seen, no bridging gaps: draw each visible stretch as its own line; every point needs a visible line under it). `one_call_per_turn` now defaults to False (round 9: no effect); the prompt line "look at the result of check_points before drawing" replaced the one-call rule.
+
+Run (20 slices, no tracer, check_points, scrolling): no errors, 14.1 turns, ~166k input tokens per run, exactly 1 call per turn even with the single-call rule off (the reworded "do not issue them together" and "one fissure at a time" lines were enough to make it fully sequential), so this run is also effectively sequential; 40 lines (previous no-tracer runs: 45), 8.6 points per mark.
+
+Blinded 3-way (20 slices, two reviewers, counting wrong ends and interpolated stretches; ON % / NEAR / NOT / missed / bad ends / interpolated / ranked first or tied):
+- with tracer, parallel (older prompt): 84, 86 % / 5, 5 / 2, 1 / 2, 1 / 3, 2 / 3, 1 / 14, 18
+- no tracer, parallel (older prompt): 84, 82 % / 4, 4 / 3, 4 / 2, 3 / 1, 3 / 4, 4 / 14, 11
+- no tracer, new rules: 88, 90 % / 5, 4 / 0, 0 / 2, 4 / 4, 4 / 0, 0 / 15, 14
+Result: the rules removed interpolated stretches (0 and 0 vs 4 and 4) and lines on no fissure (0 and 0), and placement is a little higher (88, 90 %). They did not reduce wrong ends (4 and 4 vs 1 and 3), and the model is more conservative: fewer lines and misses level or higher (2 and 4 vs 2 and 3). Confounded with the model having become sequential, which round 9 suggests does not matter. 20 slices, no ground truth.
+
+## Round 11: a separate reviewer agent via `overlay(review=true)`
+
+Design (`reviewer.py`, `prompts/fissure_reviewer_rules.txt`, `prompts/fissure_reviewer.txt`, `RunConfig.use_reviewer / max_reviews / reviewer_model`, CLI `scroll_agent ... --review`): when the model calls `overlay` with `review: true`, a separate fresh Sol call (no access to the drawing agent's reasoning) sees, for each line, a panel (clean crop | high-contrast crop | crop with the line and numbered point rings) plus an overview, checks the lines against an editable rule list, and returns per line and per point which rule is broken and why, in words only (no coordinates, no corrected points, because different agents use different coordinate frames). At most 2 reviews per run; encouraged in the prompt, not required. Rules (8): ends, no interpolation, points on the line, smooth path, no duplicates, right structure, naming fits the anatomy not the picture (a left oblique that looks horizontal on an axial slice is normal), missed fissures. Rule 7 was written this way after the observation that "the left lung has no horizontal fissure" would wrongly flag a normal axial left oblique. The in-loop rules overlap with the blinded evaluators' rubric, which is a known risk of rewarding the grader's checklist.
+
+Use (20 slices, no tracer, check_points): 19 of 20 runs called it once (median turn 15 of ~18, i.e. late, before submit); the reviewer judged 22 lines ok and 12 with problems, cited `ends` 10 times, `points_on_line` 2, `interpolation` 1, and reported 8 possibly missed fissures; after a review the agent zoomed 14 times, re-checked points 9 times and redrew 8 lines. Cost: ~223k input tokens per run for the drawing agent (plus the reviewer's own call), 16.9 turns.
+
+Blinded 3-way (20 slices, two reviewers; ON % / missed / bad ends / interpolated / ranked first or tied):
+- with tracer (anchor): 86, 77 % / 2, 1 / 4, 1 / 1, 3 / 16, 15
+- no tracer, no reviewer (same rules): 90, 85 % / 4, 2 / 5, 2 / 0, 1 / 14, 16
+- no tracer + reviewer: 88, 73 % / 4, 3 / 7, 5 / 0, 2 / 14, 12
+Result: no improvement; if anything worse, and wrong ends went UP (7 and 5 vs 5 and 2). Why (from the logs): 9 of the 10 `ends` findings said the line "stops short" of a visible continuation (typically "continues medially toward the mediastinum / a brighter branching vessel"), none said it overshoots, and of 6 lines redrawn after a review 5 became longer. The reviewer's end rule is one-sided and treats bright structures near the hilum as fissure continuation, so it pushes the agent to extend lines, which the main prompt forbids and which the evaluators count as wrong ends. First experiment per the plan; shared blind spot (same model) is accepted for now. Untested next steps: make rule 1 symmetric and conservative (extension requests only when the continuation is a thin continuous line distinct from vessels, never toward the hilum on a vessel), split the rules into false-positive checks (trim/delete) versus extension requests with a higher bar, try dropping the high-contrast tile from the reviewer's panel.
+
+## Round 12: scrolling at the working zoom, no slice cap, finishing the ends
+
+Problems reported: (1) scrolling happened at a different zoom than the agent was looking at; (2) a cap on how many slices it can see; (3) ends are still a problem and it was now missing them (not finishing the lines).
+Findings in the code/data: `look` always drew the FULL view (no view parameter), and the `completed` image too, so scrolling jumped from a zoom to the whole lung (`zoom`, `check_points`, `mark`, `overlay` already accepted a slice and a view, and views are shared across slices, so zooming a scrolled slice worked but `look` could not show the working view). The scroll agent had no slice cap; the per-scan agent had `MAX_OPEN = 10` (and said so in its prompt). Ends: after the strict end rule ("move an end inward if you cannot see the line") the share of line ends within 3 mm of the lung edge fell from 50% (45/90) to 38% (30/80), median distance from the edge 3.3 -> 4.1 mm.
+Changes: `look(slice, view_id?, lobes?, completed?)` shows any slice in the given view (same region on every slice, that view's contrast); the `completed` image uses the view the call was working in; unknown view ids give a clear error; per-scan agent cap removed (and the prompt sentence); the strict end rule replaced by "finish every line": run each line to where the visible fissure ends (to the pleura if it reaches it, or where it fades), do not stop early, look at both ends in a zoom before submitting, add points if the fissure continues, check them, and use `look` with the same view on a neighbouring slice to see where it ends; and still "do not go past the visible line / do not extend along a vessel toward the hilum".
+Behaviour (20 slices; 3 runs failed on a transient OpenAI 503 and were rerun; one run hit the 24-turn limit and was rerun with 125): `look` used 83 times, 81 of them in a zoomed view (the model now scrolls at its working zoom), ~16.4 turns and ~203k input tokens per run, 2.1 other slices per run, 10.3 points per mark on average (max 17).
+Where line ends sit (distance to the lung boundary): within 3 mm of the edge 50% before the end rules, 38% with the strict rule, 60% with finish-the-ends (median 2.4 mm); more than 10 mm inside 24%, 28%, 28%.
+Blinded 3-way (20 slices, two reviewers, short and long ends counted separately; ON % / NEAR / NOT / missed / short ends / long ends / interpolated / ranked first or tied):
+- before the end rules: 84, 87 % / 5, 3 / 2, 3 / 1, 3 / 8, 8 / 0, 0 / 1, 5 / 11, 12
+- strict end rule: 85, 90 % / 6, 4 / 0, 0 / 4, 4 / 12, 12 / 0, 0 / 0, 0 / 10, 10
+- finish-the-ends + view-aware look: 81, 81 % / 7, 8 / 1, 0 / 1, 1 / 9, 9 / 2, 0 / 0, 1 / 14, 13
+Result: finishing the ends repaired the damage of the strict rule (misses 4 -> 1, short ends 12 -> 9, ends at the lung edge 38% -> 60%) while keeping interpolation near zero, and it was ranked first or tied most often. But short ends are back at about the level before any end rule (9 vs 8, roughly one line in five) and the share of lines on a fissure is a few points lower (81 vs 84-90) with more NEAR lines. Unfinished ends are not solved. The 24-turn default limit was hit once because the model scrolls more; not changed (the per-run limit is `--max-steps`).
+
+## Round 13: plain PNG images (no ticks, native size)
+
+The images were already RGB PNGs (an 8-bit lung window copied into 3 channels), so "convert to RGB PNG" was not a new variable. What differs from a plain exported PNG is the tick marks and labels drawn on every view and the upscaling to ~1000 px. `RunConfig.plain_images` (CLI `--plain`) removes both: no ticks or labels on any image; the first image is the native crop (382 x 368 px for the coronal stack of scan 2, vs 1024 x 986), zoomed views are scaled to the same native size; tool descriptions and prompt no longer mention ticks; coordinates stay normalised 0-1000, placed by eye. Panels for the blinded reviewers still use the standard upscaled crop so all methods look alike to them.
+Run (20 slices, no tracer, check_points, finish-the-ends, view-aware look, 125-turn limit): no errors, 18.9 turns (max 29, so the 24 default would have cut runs off), ~132k input tokens per run (current setup ~203k, so about a third less), 72 `check_points` calls (about 3.6 per run vs ~2.5), 109 `look`, 8.8 points per mark.
+Blinded 3-way (20 slices, two reviewers; ON % / NEAR / NOT / missed / short / long ends / interpolated / ranked first or tied):
+- with tracer (anchor): 75, 89 % / 9, 2 / 2, 3 / 1, 1 / 2, 3 / 0, 1 / 1, 2 / 12, 13
+- current: no tracer, standard images: 79, 91 % / 7, 1 / 2, 3 / 2, 2 / 4, 4 / 0, 1 / 1, 0 / 14, 14
+- plain PNG: 84, 81 % / 4, 7 / 3, 1 / 2, 2 / 3, 2 / 3, 4 / 1, 1 / 10, 8
+Result: no evidence that plain PNGs help. The two reviewers disagree on placement (84 vs 81 % on a fissure; the standard images got 79 and 91 %), plain was ranked first or tied least often (10 and 8 vs 14 and 14), and overshooting ends rose (7 vs 1 across both reviewers), which fits the model having no ticks to read positions from. Benefit: about a third fewer tokens. Caveat: different turn limit (125 vs 24), 20 slices, no ground truth.

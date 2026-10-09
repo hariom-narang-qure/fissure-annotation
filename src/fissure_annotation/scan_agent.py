@@ -22,7 +22,6 @@ from fissure_annotation.variants import boundary_polylines, hint_image
 MODEL = "@openai/gpt-6.1-sol"
 PROMPT = (Path(__file__).parents[2] / "prompts" / "fissure_scan_agent.txt").read_text()
 MAX_STEPS = 50
-MAX_OPEN = 10
 OVERVIEW_FRACTIONS = {"coronal": [0.3, 0.45, 0.6, 0.75], "axial": [0.2, 0.4, 0.6, 0.8]}
 THUMB = 360
 FISSURE_NAMES = {"right_oblique": ("oblique", "right"), "right_horizontal": ("horizontal", "right"), "left_oblique": ("oblique", "left")}
@@ -94,8 +93,6 @@ class ScanSession:
         lo, hi = self.extent[plane]
         if not lo <= index <= hi:
             return [{"type": "input_text", "text": f"index out of range: {plane} slices with lung are {lo}-{hi}"}]
-        if (plane, index) not in self.opened and len(self.opened) >= MAX_OPEN:
-            return [{"type": "input_text", "text": f"limit of {MAX_OPEN} opened slices reached; reopen one of {sorted(self.opened)}"}]
         self.opened.add((plane, index))
         sl = self.get(plane, index)
         self.current = (plane, index)

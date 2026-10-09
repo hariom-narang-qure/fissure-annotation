@@ -6,7 +6,7 @@ right, so x is reversed here. v1 (`slice.py`) did not reverse it and sent mirror
 
 In-plane pixels are resampled to be square (mm) so a 0.3 mm-slice scan is not shown stretched.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import nibabel as nib
@@ -17,6 +17,7 @@ from scipy import ndimage
 LUNG_CENTRE, LUNG_WIDTH = -600, 1500
 LOBE_FILES = ["left_upper_lobe", "left_lower_lobe", "right_upper_lobe", "right_middle_lobe", "right_lower_lobe"]
 LOBE_NAMES = {i + 1: n.replace("_", " ") for i, n in enumerate(LOBE_FILES)}
+SIDE_LABELS = {"left": (1, 2), "right": (3, 4, 5)}      # label numbers follow LOBE_FILES
 
 
 @dataclass
@@ -72,6 +73,11 @@ def cut(case: Case, plane: str, index: int) -> View:
 def orient(a: np.ndarray) -> np.ndarray:
     "a is (x, z|y) in RAS: reverse both so patient right is image left and superior/anterior is up"
     return a[::-1, ::-1].T
+
+
+def side_view(view: View, side: str) -> View:
+    "the same slice with only one lung's lobe labels kept: crops, hints and the tracer then see that lung only"
+    return replace(view, lobes=np.where(np.isin(view.lobes, SIDE_LABELS[side]), view.lobes, 0))
 
 
 def lung_extent(case: Case, axis: int) -> tuple[int, int]:

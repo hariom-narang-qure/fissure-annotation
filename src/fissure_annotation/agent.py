@@ -24,7 +24,7 @@ from fissure_annotation.client import png_data_url
 from fissure_annotation.experiment import OUT, panel, proxy_scores
 from fissure_annotation.slicing import LOBE_NAMES, cut, load_case, lung_window
 from fissure_annotation.tracing import lung_mask, ridge_map, snap
-from fissure_annotation.variants import boundary_pair, boundary_polylines, facts, hint_image, prepare, to_slice_pixels
+from fissure_annotation.variants import Prepared, boundary_pair, boundary_polylines, facts, hint_image, prepare, to_slice_pixels, upscaled
 
 MODEL = "@openai/gpt-6.1-sol"
 PROMPT = (Path(__file__).parents[2] / "prompts" / "fissure_agent.txt").read_text()
@@ -50,7 +50,7 @@ TOOLS = [
     {"type": "function", "name": "snap",
      "description": "Trace a fissure. Give 2-6 waypoints along it (ordered from one end to the other) in the frame of `view_id`. A ridge tracer moves each waypoint across the line to the nearest ridge and joins them by a minimal-cost path. The line is stored (numbered) in full-image coordinates, and you get back the traced points in the same view frame, fit statistics, and the view image with the line drawn (thick coloured = traced, thin white = your own waypoints). Pass line_id to redo an existing line.",
      "parameters": {"type": "object", "properties": {
-         "waypoints": {"type": "array", "minItems": 2, "maxItems": 8, "items": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}, "required": ["x", "y"]}},
+         "waypoints": {"type": "array", "minItems": 2, "items": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}, "required": ["x", "y"]}},
          **VIEW_PROPS,
          "line_id": {"type": "integer", "description": "existing line to replace; omit for a new line"},
          "name": {"type": "string", "enum": ["oblique", "horizontal", "accessory", "unknown"]},
@@ -95,12 +95,18 @@ class Slice:
     model gives and receives are in the 0-1000 frame of the view it names. Lines are stored in the main frame.
     """
 
-    def __init__(self, view):
+    def __init__(self, view, box=None, use_tracer=True, plain=False):
+        "box: a crop box shared by every slice of a stack, so one frame means the same anatomy on all of them"
         self.view = view
-        self.prepared = prepare(view, "E")
-        self.score = ridge_map(view.image, lung_mask(view.lobes))
+        self.prepared = prepare(view, "E") if box is None else fixed_prepared(view, box)
+        self.next_id = None            # a stack sets this so line ids are unique across slices
+        self.use_tracer = use_tracer
+        self.score = ridge_map(view.image, lung_mask(view.lobes)) if use_tracer else None
         self.lines: dict[int, dict] = {}
-        self.main = self.prepared.images[0].convert("RGB")
+        self.plain = plain
+        c0, r0, c1, r1 = self.prepared.box
+        self.native_long_side = max(c1 - c0, r1 - r0)      # the crop's own size in slice pixels
+        self.main = (Image.fromarray(view.image[r0:r1, c0:c1]).convert("RGB") if plain else self.prepared.images[0].convert("RGB"))
         self.views: dict[str, dict] = {FULL: {"box": (0.0, 0.0, 1000.0, 1000.0), "contrast": "normal"}}
 
     # ---- frames
@@ -136,12 +142,13 @@ class Slice:
         ca, ra, cb, rb = int(max(ca, 0)), int(max(ra, 0)), int(min(cb, self.view.image.shape[1] - 1)) + 1, int(min(rb, self.view.image.shape[0] - 1)) + 1
         arr = lung_window(self.view.hu[ra:rb, ca:cb], *CONTRASTS[v["contrast"]])
         crop = Image.fromarray(arr)
-        scale = ZOOM_LONG_SIDE / max(crop.size)
+        scale = (self.native_long_side if self.plain else ZOOM_LONG_SIDE) / max(crop.size)
         img = crop.resize((round(crop.width * scale), round(crop.height * scale)), Image.LANCZOS).convert("RGB")
         legend = []
         if lobes:
             legend = self.draw_lobes(img, self.view.lobes[ra:rb, ca:cb])
-        draw_ticks(img)
+        if not self.plain:
+            draw_ticks(img)
         return img, legend
 
     def draw_lobes(self, img: Image.Image, sub: np.ndarray) -> list[str]:
@@ -165,9 +172,16 @@ class Slice:
         for k, i in enumerate(ids):
             col = COLOURS[k % len(COLOURS)]
             line = self.lines[i]
-            d.line([to_img(p["x"], p["y"]) for p in line["mine"]], fill=(255, 255, 255), width=1)
-            xy = [to_img(*self.to_model(c, r)) for r, c in line["path"]]
-            d.line(xy, fill=col, width=2)
+            own = [to_img(p["x"], p["y"]) for p in line["mine"]]
+            if line["path"] is None:             # no tracer: the model's own line, with its points marked
+                d.line(own, fill=col, width=2)
+                for x, y in own:
+                    d.ellipse([x - 3, y - 3, x + 3, y + 3], outline=col)
+                xy = own
+            else:
+                d.line(own, fill=(255, 255, 255), width=1)
+                xy = [to_img(*self.to_model(c, r)) for r, c in line["path"]]
+                d.line(xy, fill=col, width=2)
             d.text((xy[0][0] + 5, xy[0][1] - 14), f"{i} {line['side'][0].upper()}", fill=col)
 
     # ---- tools: each returns (content, image or None)
@@ -183,16 +197,54 @@ class Slice:
         img, legend = self.render(vid, lobes)
         (ca, ra), (cb, rb) = self.to_px(mx0, my0), self.to_px(mx1, my1)
         mm = f"about {abs(cb - ca) * self.view.mm_per_px:.0f} x {abs(rb - ra) * self.view.mm_per_px:.0f} mm"
-        return [text(f"view_id={vid}: zoom of {view_id} x {x0}-{x1}, y {y0}-{y1} ({mm}), contrast {contrast}. Coordinates in this view are its own 0-1000 frame (ticks drawn inside the edges)."
+        return [text(f"view_id={vid}: zoom of {view_id} x {x0}-{x1}, y {y0}-{y1} ({mm}), contrast {contrast}. Coordinates in this view are its own 0-1000 frame ({self.tick_note()})."
                      + ("; lobe boundaries: " + "; ".join(legend) if lobes else "")), image(img)], img
+
+    def line_id_for(self, line_id) -> tuple[int, str]:
+        "reuse an existing line's id to redo it, otherwise a new id; the note says when a requested id was not usable"
+        lid = line_id if line_id in self.lines else (self.next_id() if self.next_id else max(self.lines, default=0) + 1)
+        return lid, (f"line_id {line_id} is not a line on this slice, created line {lid}. " if line_id not in (None, lid) else "")
+
+    def check_points_tool(self, waypoints, view_id=FULL, connect=False):
+        """preview only: where do these waypoints land on the view? Nothing is stored or traced.
+        Points are in the view's own frame, so they are drawn as given: numbered rings (the line should pass through each ring's centre)."""
+        self.box(view_id)
+        if not waypoints:
+            return [text("no waypoints given")], None
+        clean, _ = self.render(view_id)
+        marked = clean.copy()
+        d = ImageDraw.Draw(marked)
+        w, h = marked.size
+        pts = [(p["x"] / 1000 * w, p["y"] / 1000 * h) for p in waypoints]
+        if connect:
+            d.line(pts, fill=(255, 255, 0), width=1)
+        for k, (x, y) in enumerate(pts, start=1):
+            d.ellipse([x - 5, y - 5, x + 5, y + 5], outline=(255, 0, 255), width=2)
+            d.text((x + 8, y - 15), str(k), fill=(255, 0, 255))
+        both = Image.new("RGB", (w * 2 + 8, h), "black")
+        both.paste(clean, (0, 0))
+        both.paste(marked, (w + 8, 0))
+        outside = [k for k, p in enumerate(waypoints, start=1) if not (0 <= p["x"] <= 1000 and 0 <= p["y"] <= 1000)]
+        note = f"view {view_id}: left = clean, right = your {len(pts)} points as numbered rings (nothing stored)" + (f"; points outside this view: {outside}" if outside else "")
+        return [text(note), image(both)], both
+
+    def mark_tool(self, waypoints, name, side, view_id=FULL, line_id=None):
+        "no-tracer workflow: the line is the model's waypoints joined by straight segments; the picture shows the line and its points"
+        box = self.box(view_id)
+        main_pts = [self.local_to_main(w["x"], w["y"], box) for w in waypoints]
+        lid, note = self.line_id_for(line_id)
+        self.lines[lid] = {"name": name, "side": side, "path": None, "stats": {}, "mine": [{"x": round(x, 1), "y": round(y, 1)} for x, y in main_pts]}
+        img, _ = self.render(view_id)
+        self.draw_lines(img, view_id, [lid])
+        local = [self.main_to_local(x, y, box) for x, y in main_pts]
+        return [text(note + json.dumps({"line_id": lid, "view_id": view_id, "points": [{"x": round(x), "y": round(y)} for x, y in local]})), image(img)], img
 
     def snap_tool(self, waypoints, name, side, view_id=FULL, line_id=None):
         box = self.box(view_id)
         main_pts = [self.local_to_main(w["x"], w["y"], box) for w in waypoints]
         rc = [(self.to_px(x, y)[1], self.to_px(x, y)[0]) for x, y in main_pts]
         s = snap(self.score, rc, self.view.mm_per_px)
-        lid = line_id if line_id in self.lines else max(self.lines, default=0) + 1
-        note = f"line_id {line_id} did not exist, created line {lid}. " if line_id not in (None, lid) else ""
+        lid, note = self.line_id_for(line_id)
         self.lines[lid] = {"name": name, "side": side, "path": s.path, "stats": s.stats,
                            "mine": [{"x": round(x, 1), "y": round(y, 1)} for x, y in main_pts]}
         local = [self.main_to_local(*self.to_model(c, r), box) for r, c in thin(s.path, 8)]
@@ -211,8 +263,12 @@ class Slice:
         both = Image.new("RGB", (clean.width * 2 + 8, clean.height), "black")
         both.paste(clean, (0, 0))
         both.paste(drawn, (clean.width + 8, 0))
-        return [text(f"view {view_id}: left = clean, right = lines {ids} drawn (thin white = your own waypoints, thick coloured = traced path)"
+        legend = ("thin white = your own waypoints, thick coloured = traced path" if self.use_tracer else "your lines, with circles at your points")
+        return [text(f"view {view_id}: left = clean, right = lines {ids} drawn ({legend})"
                      + ("; lobe boundaries: " + "; ".join(legend) if lobes else "")), image(both)], both
+
+    def tick_note(self) -> str:
+        return "no tick marks: place points by eye as a fraction of the image width and height" if self.plain else "ticks drawn inside the edges"
 
     def final_fissures(self, submitted):
         out = []
@@ -220,11 +276,17 @@ class Slice:
             line = self.lines.get(s["line_id"])
             if line is None or s["status"] == "dropped":
                 continue
-            waypoints = ([{"x": round(p["x"]), "y": round(p["y"])} for p in line["mine"]] if s.get("geometry", "mine") == "mine"
+            geometry = s.get("geometry", "mine") if line["path"] is not None else "mine"
+            waypoints = ([{"x": round(p["x"]), "y": round(p["y"])} for p in line["mine"]] if geometry == "mine"
                          else [dict(zip("xy", self.to_model(c, r))) for r, c in thin(line["path"], 12)])
             out.append({"name": line["name"], "side": line["side"], "confidence": {"confirmed": "clear", "uncertain": "faint"}[s["status"]],
-                        "waypoints": waypoints, "evidence": s["evidence"], "geometry": s.get("geometry", "mine"), "fit": line["stats"]})
+                        "waypoints": waypoints, "evidence": s["evidence"], "geometry": geometry, "fit": line["stats"]})
         return out
+
+
+def fixed_prepared(view, box) -> Prepared:
+    img, scale = upscaled(view, box)
+    return Prepared([img], "", box, scale)
 
 
 COLOUR_NAMES = ["red", "green", "light blue", "magenta", "orange", "yellow", "turquoise", "violet", "pink", "lime"]
@@ -262,22 +324,37 @@ def run_tool(sl: Slice, call, log_dir: Path, step: int):
     return content, None
 
 
-def converse(client, kw: dict, first_input, handle, finish: str, max_steps: int):
+def create(client, kw: dict, single_call: bool, **extra):
+    "responses.create, asking the API for one tool call per turn when requested (retrying without the parameter if it is rejected)"
+    if single_call:
+        try:
+            return client.responses.create(parallel_tool_calls=False, **kw, **extra)
+        except Exception as e:
+            if "parallel_tool_calls" not in str(e):
+                raise
+    return client.responses.create(**kw, **extra)
+
+
+def converse(client, kw: dict, first_input, handle, finish: str, max_steps: int, single_call: bool = False):
     """Drive one tool-calling conversation until the model calls `finish` or max_steps is hit.
-    handle(call, step) -> tool output content. Returns (finish_args or None, transcript, usage, steps)."""
+    handle(call, step) -> tool output content. With single_call, only the first tool call of a turn is run: the model is told the
+    others were skipped, so every action sees the result of the one before it. Returns (finish_args or None, transcript, usage, steps)."""
     transcript, usage = [], {"input": 0, "output": 0, "reasoning": 0}
-    resp = client.responses.create(input=first_input, **kw)
+    resp = create(client, kw, single_call, input=first_input)
     finished, steps = None, 0
     while steps < max_steps:
         for k in ("input", "output"):
             usage[k] += getattr(resp.usage, f"{k}_tokens", 0)
         usage["reasoning"] += getattr(getattr(resp.usage, "output_tokens_details", None), "reasoning_tokens", 0) or 0
         calls = [o for o in resp.output if o.type == "function_call"]
-        transcript.append({"step": steps, "calls": [{"name": c.name, "args": json.loads(c.arguments)} for c in calls]})
+        skipped = calls[1:] if single_call else []
+        run = calls[:1] if single_call else calls
+        transcript.append({"step": steps, "calls": [{"name": c.name, "args": json.loads(c.arguments)} for c in run], "skipped": [c.name for c in skipped]})
         if not calls:
             break
-        outputs = []
-        for c in calls:
+        outputs = [{"type": "function_call_output", "call_id": c.call_id,
+                    "output": "skipped: only one tool call is run per turn; call it again in a later turn if you still need it"} for c in skipped]
+        for c in run:
             if c.name == finish:
                 finished = json.loads(c.arguments)
                 outputs.append({"type": "function_call_output", "call_id": c.call_id, "output": "submitted"})
@@ -291,7 +368,7 @@ def converse(client, kw: dict, first_input, handle, finish: str, max_steps: int)
         if finished is not None:
             break
         steps += 1
-        resp = client.responses.create(previous_response_id=resp.id, input=outputs, **kw)
+        resp = create(client, kw, single_call, previous_response_id=resp.id, input=outputs)
     return finished, transcript, usage, steps
 
 
