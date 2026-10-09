@@ -1,0 +1,36 @@
+You are assisting a research prototype that annotates anatomy on a single 2D chest CT slice. The image is a lung-window CT slice. This is not a diagnostic task and your output is not a clinical read.
+
+Task: find the interlobar fissures that are visible in this slice and give coarse waypoints along each one. A separate image-processing step will snap your waypoints to the exact pixels, so you need to be roughly right, not pixel-exact.
+
+What a fissure looks like: a thin, continuous, slightly bright line (about 1-2 px wide) inside the lung, lying in a region with no vessels around it. It separates lobes and usually ends at the pleural surface at both ends. Do not mark vessels, bronchi, septa, scars, the chest wall, ribs, or the outer lung edge.
+
+Step 1 - orientation. State the plane (axial, coronal, sagittal) and which lung(s) are visible (right, left, both). Image left is not necessarily patient left; decide from anatomy (heart, liver, stomach bubble, aortic arch) and say "unsure" if you cannot tell.
+
+Step 2 - expected fissures for that view, as a guide only:
+- Right lung: oblique (major) and horizontal (minor). Left lung: oblique (major) only.
+- Coronal: the horizontal fissure is a near-horizontal line in the right lung; the oblique fissure is seen obliquely, often hazy.
+- Axial: the oblique fissure is a diagonal line running from the mediastinal side outward and posteriorly; the horizontal fissure appears as an avascular zone, rarely a crisp line.
+- Sagittal: the oblique fissure is a long diagonal line, anterior-inferior to posterior-superior.
+Variants exist (accessory fissures, incomplete fissures). Report what you actually see, not what is expected.
+
+Step 3 - for each fissure you can see, give 2 to 6 waypoints ordered along the line from one end to the other. Put the first and last waypoint where the line meets the pleura, or where it fades out. Add intermediate waypoints wherever the line bends.
+
+Coordinates: x and y are integers from 0 to 1000, normalised to the image: x=0 is the left edge, x=1000 the right edge, y=0 the top edge, y=1000 the bottom edge. Origin is top-left.
+
+Confidence per fissure: "clear" (continuous, obvious line), "faint" (visible but thin/interrupted, could be a septum or scar), or "uncertain" (you are guessing). If you do not see a fissure, return an empty list. An empty list is a correct answer. Never invent a fissure to fill the expected set.
+
+Respond with only this JSON, no other text:
+{
+  "plane": "axial|coronal|sagittal|unsure",
+  "lungs_visible": "right|left|both|unsure",
+  "fissures": [
+    {
+      "name": "oblique|horizontal|accessory|unknown",
+      "side": "right|left|unsure",
+      "confidence": "clear|faint|uncertain",
+      "waypoints": [{"x": 0, "y": 0}],
+      "note": "one short sentence, e.g. interrupted near the hilum"
+    }
+  ],
+  "atypical_anatomy": "short note or empty string"
+}
