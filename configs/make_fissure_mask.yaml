@@ -1,0 +1,2 @@
+# Paths come from flags (--nifti, --mask-path). Everything else defaults to the values of the waypoint agent runs.
+workers: 16

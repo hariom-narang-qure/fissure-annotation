@@ -28,6 +28,7 @@ class WaypointExperiment(ExperimentSettings):
     out_dir: Path
     first_slice: int
     last_slice: int
+    workers: int = 16
     agent: AgentSettings = AgentSettings()
 
     @property
@@ -48,10 +49,16 @@ def portkey_client() -> Portkey:
     return Portkey(api_key=os.environ["PORTKEY_API_KEY"])
 
 
-def run_experiment(config: WaypointExperiment, client) -> list[SliceLog]:
+def run_slices(config: WaypointExperiment, client) -> list[SliceLog]:
+    "slices that already have a log are skipped, so a run that failed halfway is finished by running it again"
     folder = RunFolder(root=config.out_dir)
-    with ThreadPoolExecutor(len(config.slice_indices)) as pool:
-        logs = list(pool.map(lambda z: run_slice(client, config.agent, folder, config.slices_dir, z), config.slice_indices))
+    pending = [z for z in config.slice_indices if not folder.log_path(config.slices_dir / slice_file_name(z)).exists()]
+    with ThreadPoolExecutor(config.workers) as pool:
+        return list(pool.map(lambda z: run_slice(client, config.agent, folder, config.slices_dir, z), pending))
+
+
+def run_experiment(config: WaypointExperiment, client) -> list[SliceLog]:
+    logs = run_slices(config, client)
     write_sheets(config)
     return logs
 

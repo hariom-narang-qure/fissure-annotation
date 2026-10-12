@@ -20,6 +20,16 @@ Research only, not diagnostic.
 - Flags go on top of the YAML, for example `--agent.max-steps 20` or `--first-slice 160 --last-slice 170`.
 - Output goes under `out_dir`: `points/` (the model's waypoints), `masks/`, `overlays/`, `logs/` and `contact_sheet.png`.
 
+## Fissure mask for a scan
+
+    uv run --env-file .env python scripts/make_fissure_mask.py --config configs/make_fissure_mask.yaml \
+        --nifti scan.nii.gz --mask-path out/scan_fissures.nii.gz --first-slice 165 --last-slice 179
+
+- The mask is a 0/1 `uint8` NIfTI with the same shape and affine as the scan, one voxel wide in plane and one slice thick.
+- The agent calls the model once per slice. Leave out `--first-slice` and `--last-slice` to run every slice, which costs roughly 15k input tokens per slice.
+- The slice PNGs and the agent's points, masks and logs go to `<mask name>_work/` next to the mask, or to `--work-dir`.
+- Running the same command again skips slices that already have a log, so a run that failed halfway can be finished.
+
 ## Earlier pipeline
 
 The lobe-mask scroll agent, reviewer and one-shot variants were removed.
