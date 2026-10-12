@@ -1,0 +1,5 @@
+# Sol picks waypoints on 15 contiguous axial slices where a fissure is visible, and the ridge tracer joins them.
+slices_dir: work/waypoint_slices/train_10231
+out_dir: work/waypoint_runs/sol_153_167
+first_slice: 153
+last_slice: 167
