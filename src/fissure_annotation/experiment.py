@@ -11,13 +11,14 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 from scipy import ndimage
 
 from fissure_annotation.client import ask, parse_json
 from fissure_annotation.picker import pick_slices
 from fissure_annotation.slicing import boundary_mask, cut, load_case
 from fissure_annotation.drawing.model_lines import draw_model_lines
+from fissure_annotation.drawing.panels import titled_row
 from fissure_annotation.variants import boundary_polylines, hint_image, prepare, to_slice_pixels
 
 MODEL = "@openai/gpt-6.1-sol"
@@ -49,16 +50,8 @@ def proxy_scores(view, fissures, prepared) -> dict:
 
 
 def panel(prepared, hint: Image.Image, overlay: Image.Image) -> Image.Image:
-    tiles = [("1 model input", prepared.images[0].convert("RGB")), ("2 model output", overlay),
-             ("3 lobe-segmentation boundaries (imperfect, reference only)", hint)]
-    h = max(t.height for _, t in tiles)
-    canvas = Image.new("RGB", (sum(t.width for _, t in tiles) + 8 * len(tiles), h + 18), "black")
-    x = 0
-    for title, t in tiles:
-        canvas.paste(t, (x, 18))
-        ImageDraw.Draw(canvas).text((x + 4, 3), title, fill="white")
-        x += t.width + 8
-    return canvas
+    return titled_row([("1 model input", prepared.images[0].convert("RGB")), ("2 model output", overlay),
+                       ("3 lobe-segmentation boundaries (imperfect, reference only)", hint)])
 
 
 def run_variant(case: str, plane: str, idx: int, view, variant: str, model: str) -> dict:

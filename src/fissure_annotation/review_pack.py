@@ -9,10 +9,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw
 
 from fissure_annotation.agent import MODEL, run_agent
 from fissure_annotation.drawing.model_lines import draw_model_lines
+from fissure_annotation.drawing.panels import side_by_side
 from fissure_annotation.picker import best_in
 from fissure_annotation.config import RunConfig
 from fissure_annotation.scroll_agent import run_scroll
@@ -29,15 +29,6 @@ def quarter_picks(case) -> list[tuple[str, int]]:
         edges = np.linspace(present[0], present[-1], QUARTERS + 1).astype(int)
         picks += [(plane, best_in(case, plane, int(a), int(b))) for a, b in zip(edges[:-1], edges[1:])]
     return picks
-
-
-def side_by_side(clean: Image.Image, outlined: Image.Image, title: str) -> Image.Image:
-    gap, bar = 8, 20
-    out = Image.new("RGB", (clean.width + outlined.width + gap, clean.height + bar), "black")
-    out.paste(clean, (0, bar))
-    out.paste(outlined, (clean.width + gap, bar))
-    ImageDraw.Draw(out).text((4, 4), title, fill="white")
-    return out
 
 
 def run_slice(case, plane: str, idx: int, out_dir: Path, model: str, scroll: bool = False, use_tracer: bool = True) -> dict:

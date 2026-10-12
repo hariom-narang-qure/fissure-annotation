@@ -11,11 +11,12 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 from portkey_ai import Portkey
 
 from fissure_annotation.agent import REASONING, TOOLS, Slice, converse, rgb_data_url, thin
 from fissure_annotation.drawing.model_lines import draw_model_lines
+from fissure_annotation.drawing.panels import contact_sheet, labelled_thumbnail
 from fissure_annotation.experiment import OUT, panel
 from fissure_annotation.slicing import cut, load_case
 from fissure_annotation.variants import boundary_polylines, hint_image
@@ -72,17 +73,8 @@ class ScanSession:
             for f in fracs:
                 idx = int(lo + f * (hi - lo))
                 img = self.get(plane, idx).main
-                scale = THUMB / max(img.size)
-                tile = img.resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
-                ImageDraw.Draw(tile).text((4, 4), f"{plane}:{idx}", fill=(255, 255, 0))
-                tiles.append(tile)
-        cols = 4
-        rows = -(-len(tiles) // cols)
-        cell_w, cell_h = max(t.width for t in tiles), max(t.height for t in tiles)
-        sheet = Image.new("RGB", (cols * cell_w, rows * cell_h), "black")
-        for i, t in enumerate(tiles):
-            sheet.paste(t, ((i % cols) * cell_w, (i // cols) * cell_h))
-        return sheet
+                tiles.append(labelled_thumbnail(img, THUMB, f"{plane}:{idx}"))
+        return contact_sheet(tiles, columns=4)
 
     def current_slice(self) -> Slice:
         if self.current is None:
