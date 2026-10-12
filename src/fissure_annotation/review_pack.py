@@ -12,7 +12,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from fissure_annotation.agent import MODEL, run_agent
-from fissure_annotation.experiment import draw_model_lines
+from fissure_annotation.drawing.model_lines import draw_model_lines
 from fissure_annotation.picker import best_in
 from fissure_annotation.config import RunConfig
 from fissure_annotation.scroll_agent import run_scroll

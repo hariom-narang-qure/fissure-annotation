@@ -10,9 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 from scipy import ndimage
 
+from fissure_annotation.drawing.polylines import draw_polylines
 from fissure_annotation.slicing import LOBE_NAMES, View, boundary_pair
 
 PROMPT = (Path(__file__).parents[2] / "prompts" / "fissure_v2.txt").read_text()
@@ -20,7 +21,6 @@ PROMPT_V3 = (Path(__file__).parents[2] / "prompts" / "fissure_v3.txt").read_text
 TARGET_LONG_SIDE = 1024
 CROP_MARGIN_MM = 6
 MIN_COMPONENT_FRACTION = 0.02
-PAIR_COLOURS = ["red", "lime", "cyan", "magenta", "orange", "yellow", "deepskyblue"]
 
 
 @dataclass
@@ -86,10 +86,8 @@ def hint_text(polys) -> str:
 
 def hint_image(view: View, box, polys, scale: float) -> Image.Image:
     img, _ = upscaled(view, box)
-    rgb = img.convert("RGB"); d = ImageDraw.Draw(rgb)
-    for k, (name, pts) in enumerate(polys):
-        px = [(x / 1000 * rgb.width, y / 1000 * rgb.height) for x, y in pts]
-        d.line(px, fill=PAIR_COLOURS[k % len(PAIR_COLOURS)], width=2)
+    rgb = img.convert("RGB")
+    draw_polylines(rgb, [points for _, points in polys])
     return rgb
 
 

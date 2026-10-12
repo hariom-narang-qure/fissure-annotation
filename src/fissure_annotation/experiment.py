@@ -17,10 +17,10 @@ from scipy import ndimage
 from fissure_annotation.client import ask, parse_json
 from fissure_annotation.picker import pick_slices
 from fissure_annotation.slicing import boundary_mask, cut, load_case
+from fissure_annotation.drawing.model_lines import draw_model_lines
 from fissure_annotation.variants import boundary_polylines, hint_image, prepare, to_slice_pixels
 
 MODEL = "@openai/gpt-6.1-sol"
-CONF_COLOUR = {"clear": (255, 40, 40), "faint": (255, 220, 0), "uncertain": (255, 140, 0)}
 OUT = Path("work/exp")
 
 
@@ -46,17 +46,6 @@ def proxy_scores(view, fissures, prepared) -> dict:
     dist_to_line = ndimage.distance_transform_edt(~line) * view.mm_per_px
     return {"dist_mm": round(float(d.mean()), 1), "within5": round(float((d <= 5).mean()), 2),
             "recall5": round(float((dist_to_line[bmask] <= 5).mean()), 2)}
-
-
-def draw_model_lines(img: Image.Image, fissures) -> Image.Image:
-    out = img.convert("RGB")
-    d = ImageDraw.Draw(out)
-    for k, f in enumerate(fissures, start=1):
-        px = [(p["x"] / 1000 * img.width, p["y"] / 1000 * img.height) for p in f["waypoints"]]
-        col = CONF_COLOUR.get(f["confidence"], (255, 140, 0))
-        d.line(px, fill=col, width=2)
-        d.text((px[0][0] + 4, px[0][1] - 12), f"{k} {f['side'][0].upper()} {f['confidence']}", fill=col)
-    return out
 
 
 def panel(prepared, hint: Image.Image, overlay: Image.Image) -> Image.Image:

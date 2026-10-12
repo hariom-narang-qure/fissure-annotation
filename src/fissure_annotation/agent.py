@@ -23,6 +23,7 @@ from portkey_ai import Portkey
 from fissure_annotation.client import png_data_url
 from fissure_annotation.drawing.lines import draw_marked_line, draw_traced_line, line_colour
 from fissure_annotation.drawing.compose import tile_row
+from fissure_annotation.drawing.model_lines import draw_model_lines
 from fissure_annotation.drawing.lobes import draw_lobe_boundaries
 from fissure_annotation.drawing.rings import draw_point_rings
 from fissure_annotation.drawing.ticks import draw_ticks
@@ -358,7 +359,6 @@ def run_one(case: str, plane: str, idx: int, view, model: str) -> dict:
         return {"case": case, "plane": plane, "index": idx, "variant": "AG", "error": str(e)[:300]}
     sl = r["slice"]
     (d / "AG.json").write_text(json.dumps(r["fissures"], indent=2))
-    from fissure_annotation.experiment import draw_model_lines
     overlay = draw_model_lines(sl.main, r["fissures"])
     polys = boundary_polylines(view, sl.prepared.box, sl.prepared.scale)
     panel(sl.prepared, hint_image(view, sl.prepared.box, polys, sl.prepared.scale), overlay).save(d / "AG.panel.png")
