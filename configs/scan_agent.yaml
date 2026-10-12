@@ -1,0 +1,3 @@
+# Rounds 3 and 4: one conversation per scan, 50 turns.
+cases: work/cases.json
+max_steps: 50

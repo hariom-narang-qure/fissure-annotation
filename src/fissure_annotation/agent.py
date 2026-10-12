@@ -13,8 +13,6 @@ from collections.abc import Callable
 import io
 import json
 import os
-import sys
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -25,15 +23,11 @@ from fissure_annotation.drawing.lines import draw_marked_line, draw_traced_line,
 from fissure_annotation.lines import CONFIDENCE_OF_STATUS, Fissure, Line, MainPoint, SubmittedLine, Waypoint
 from fissure_annotation.frames import CropFrame, main_to_view, view_to_main
 from fissure_annotation.drawing.compose import tile_row
-from fissure_annotation.drawing.model_lines import draw_model_lines
 from fissure_annotation.drawing.lobes import draw_lobe_boundaries
 from fissure_annotation.drawing.rings import draw_point_rings
 from fissure_annotation.drawing.ticks import draw_ticks
-from fissure_annotation.config import EXPERIMENT_OUT as OUT
-from fissure_annotation.evaluation.proxy_scores import proxy_scores
-from fissure_annotation.evaluation.review_panel import panel
 from fissure_annotation.tools.schemas import TOOLS
-from fissure_annotation.slicing import cut, load_case, lung_window
+from fissure_annotation.slicing import lung_window
 from fissure_annotation.tracing import lung_mask, ridge_map, snap
 from fissure_annotation.variants import Prepared, boundary_polylines, facts, hint_image, prepare, upscaled
 
@@ -327,40 +321,3 @@ def run_agent(view, model: str, log_dir: Path) -> dict:
     fissures = sl.final_fissures(submitted)
     (log_dir / "transcript.json").write_text(json.dumps({"transcript": transcript, "submitted": submitted, "usage": usage}, indent=1))
     return {"fissures": fissures, "steps": steps, "usage": usage, "submitted_explicitly": finished is not None, "slice": sl}
-
-
-def run_one(case: str, plane: str, idx: int, view, model: str) -> dict:
-    d = OUT / case / f"{plane}_{idx}"
-    try:
-        r = run_agent(view, model, d / "agent_log")
-    except Exception as e:
-        return {"case": case, "plane": plane, "index": idx, "variant": "AG", "error": str(e)[:300]}
-    sl = r["slice"]
-    (d / "AG.json").write_text(json.dumps([f.model_dump() for f in r["fissures"]], indent=2))
-    overlay = draw_model_lines(sl.main, r["fissures"])
-    polys = boundary_polylines(view, sl.prepared.box, sl.prepared.scale)
-    panel(sl.prepared, hint_image(view, sl.prepared.box, polys, sl.prepared.scale), overlay).save(d / "AG.panel.png")
-    return {"case": case, "plane": plane, "index": idx, "variant": "AG", "n_fissures": len(r["fissures"]), "steps": r["steps"],
-            "tokens": r["usage"], **proxy_scores(view, r["fissures"], sl.prepared)}
-
-
-def main():
-    "agent <cases.json> [model] [only_case_substring]"
-    cases = json.load(open(sys.argv[1]))
-    model = sys.argv[2] if len(sys.argv) > 2 else MODEL
-    only = sys.argv[3] if len(sys.argv) > 3 else ""
-    jobs = []
-    for name, (scan, lobe_dir) in cases.items():
-        if only not in name:
-            continue
-        case = load_case(scan, lobe_dir)
-        for plane, idx in json.load(open(OUT / name / "picks.json")):
-            jobs.append((name, plane, idx, cut(case, plane, idx)))
-    with ThreadPoolExecutor(5) as ex:
-        results = list(ex.map(lambda j: run_one(*j[:3], j[3], model), jobs))
-    (OUT / f"results_AG_{model.split('/')[-1]}.json").write_text(json.dumps(results, indent=1))
-    print(json.dumps(results, indent=1))
-
-
-if __name__ == "__main__":
-    main()

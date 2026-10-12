@@ -6,27 +6,18 @@
 """
 import json
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
+from fissure_annotation.cases import CasesSettings, picked_slices
 from fissure_annotation.config import EXPERIMENT_OUT as OUT, AgentConfig, RunConfig
 from fissure_annotation.drawing.model_lines import draw_model_lines
 from fissure_annotation.evaluation.proxy_scores import proxy_scores
 from fissure_annotation.evaluation.review_panel import panel
 from fissure_annotation.lines import Fissure
 from fissure_annotation.scroll_agent import run_scroll
-from fissure_annotation.settings import ExperimentSettings
-from fissure_annotation.slicing import load_case
 from fissure_annotation.variants import boundary_polylines, hint_image
 
 
-class ScrollExperimentConfig(ExperimentSettings):
-    config: Path | None = None
-    cases: Path = Path("work/cases.json")
-    only: str = ""
-    """Only the cases whose name contains this."""
-    workers: int = 5
-    max_jobs: int | None = None
-    """Only the first n slices, for a fast smoke run."""
+class ScrollExperimentConfig(CasesSettings):
     agent: AgentConfig = AgentConfig()
 
 
@@ -68,19 +59,8 @@ def run_one(case, name: str, plane: str, idx: int, agent: AgentConfig) -> dict:
             "visited": r["visited"], "extra_slices_with_lines": sorted(r["extra"]), **proxy_scores(sl.view, r["fissures"], sl.prepared)}
 
 
-def jobs_for(config: ScrollExperimentConfig) -> list[tuple]:
-    jobs = []
-    for name, (scan, lobe_dir) in json.loads(config.cases.read_text()).items():
-        if config.only not in name:
-            continue
-        case = load_case(scan, lobe_dir)
-        for plane, idx in json.loads((OUT / name / "picks.json").read_text()):
-            jobs.append((case, name, plane, idx))
-    return jobs[: config.max_jobs]
-
-
 def run_scroll_experiment(config: ScrollExperimentConfig) -> list[dict]:
     with ThreadPoolExecutor(config.workers) as ex:
-        results = list(ex.map(lambda j: run_one(*j, config.agent), jobs_for(config)))
+        results = list(ex.map(lambda j: run_one(*j, config.agent), picked_slices(config)))
     (OUT / results_file_name(config.agent)).write_text(json.dumps(results, indent=1, default=str))
     return results

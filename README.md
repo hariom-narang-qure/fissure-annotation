@@ -13,16 +13,20 @@ Run everything with `uv run --env-file <env file with PORTKEY_API_KEY> ...` (see
 - `scroll_agent.py`: the scrolling slice agent (`Stack`, `run_scroll`). `scroll_experiment.py` runs it over the picked slices of a set of scans.
 - `config.py`, `settings.py`: `AgentConfig` / `RunConfig`, and the YAML-plus-flags loader.
 - `configs/`: one YAML per experiment. `scripts/`: thin entry points.
-- `scan_agent.py`: per-scan agent that opens slices, traces, and reports presence for each fissure.
+- `scan_agent.py`: per-scan agent that opens slices, traces, and reports presence for each fissure. `scan_experiment.py` runs it.
 - `review_pack.py`: run the slice agent on a few slices of one scan and write one side-by-side image per slice.
 - `prompts/`: the prompts sent to the model.
 
 ## Examples
 
-    uv run --env-file .env python -m fissure_annotation.review_pack <scan.nii.gz> <lobe_mask_dir> review/out
+Every experiment is a YAML in `configs/` and a thin script in `scripts/`. Flags go on top of the YAML.
+
     uv run --env-file .env python scripts/run_scroll.py --config configs/scroll_current.yaml
-    uv run --env-file .env python scripts/run_scroll.py --config configs/scroll_smoke.yaml     # two slices, for a quick check
-    uv run --env-file .env python -m fissure_annotation.scan_agent work/cases.json
-    uv run --env-file .env python -m fissure_annotation.experiment work/cases.json E
+    uv run --env-file .env python scripts/run_scroll.py --config configs/scroll_smoke.yaml        # two slices, a quick check
+    uv run --env-file .env python scripts/run_scroll.py --config configs/scroll_current.yaml --agent.plain-images true
+    uv run --env-file .env python scripts/run_scan.py --config configs/scan_agent.yaml
+    uv run --env-file .env python scripts/run_one_shot.py --config configs/one_shot_e.yaml
+    uv run --env-file .env python scripts/run_slice_agent.py --config configs/slice_agent.yaml
+    uv run --env-file .env python -m fissure_annotation.review_pack <scan.nii.gz> <lobe_mask_dir> review/out
 
 Lobe masks come from the `total_segmentator` app in muse_tools (`scripts/lobe_crops_for_salvo.py --model total_segmentator --no-crop`).
