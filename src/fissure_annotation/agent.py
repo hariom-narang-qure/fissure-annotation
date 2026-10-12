@@ -29,7 +29,9 @@ from fissure_annotation.drawing.model_lines import draw_model_lines
 from fissure_annotation.drawing.lobes import draw_lobe_boundaries
 from fissure_annotation.drawing.rings import draw_point_rings
 from fissure_annotation.drawing.ticks import draw_ticks
-from fissure_annotation.experiment import OUT, panel, proxy_scores
+from fissure_annotation.config import EXPERIMENT_OUT as OUT
+from fissure_annotation.evaluation.proxy_scores import proxy_scores
+from fissure_annotation.evaluation.review_panel import panel
 from fissure_annotation.slicing import cut, load_case, lung_window
 from fissure_annotation.tracing import lung_mask, ridge_map, snap
 from fissure_annotation.variants import Prepared, boundary_polylines, facts, hint_image, prepare, upscaled

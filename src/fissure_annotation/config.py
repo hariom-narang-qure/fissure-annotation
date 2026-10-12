@@ -1,7 +1,9 @@
 """Settings for one agent run, in one place instead of threaded through function arguments."""
 from dataclasses import dataclass, field
+from pathlib import Path
 
 MODEL = "@openai/gpt-6.1-sol"
+EXPERIMENT_OUT = Path("work/exp")
 
 
 @dataclass(frozen=True)

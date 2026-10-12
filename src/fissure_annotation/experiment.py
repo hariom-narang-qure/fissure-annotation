@@ -1,57 +1,19 @@
-"""Run variants A-D of the v2 prompt with one model over a set of slices; save json, raw reply and a review panel each.
+"""Run variants A-E of the one-shot prompts with one model over a set of slices; save json, raw reply and a review panel each.
 
-Proxy score (NOT accuracy): the lobe-segmentation boundaries stand in for fissures. `dist_mm` is the mean distance
-from the model's polyline to the nearest lobe boundary; `within5` the share of polyline points within 5 mm;
-`recall5` the share of long boundary pixels within 5 mm of any model polyline. C and D were shown these boundaries,
-so for them the proxy is not independent of the input.
+The proxy score is in `evaluation.proxy_scores`, and it is not accuracy.
 """
 import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
-
-import numpy as np
-from PIL import Image
-from scipy import ndimage
 
 from fissure_annotation.client import ask, parse_json
+from fissure_annotation.config import EXPERIMENT_OUT as OUT, MODEL
 from fissure_annotation.picker import pick_slices
-from fissure_annotation.slicing import boundary_mask, cut, load_case
+from fissure_annotation.slicing import cut, load_case
 from fissure_annotation.drawing.model_lines import draw_model_lines
-from fissure_annotation.drawing.panels import titled_row
-from fissure_annotation.variants import boundary_polylines, hint_image, prepare, to_slice_pixels
-
-MODEL = "@openai/gpt-6.1-sol"
-OUT = Path("work/exp")
-
-
-def polyline_points(pts: list[tuple[float, float]], step: float = 2.0) -> np.ndarray:
-    out = []
-    for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
-        n = max(int(np.hypot(x1 - x0, y1 - y0) / step), 1)
-        out += [(x0 + (x1 - x0) * t / n, y0 + (y1 - y0) * t / n) for t in range(n + 1)]
-    return np.array(out)
-
-
-def proxy_scores(view, fissures, prepared) -> dict:
-    bmask = boundary_mask(view.lobes)
-    if not bmask.any() or not fissures:
-        return {"dist_mm": None, "within5": None, "recall5": None}
-    dist_to_boundary = ndimage.distance_transform_edt(~bmask) * view.mm_per_px
-    h, w = bmask.shape
-    pts = np.vstack([polyline_points([to_slice_pixels(p, prepared) for p in f["waypoints"]]) for f in fissures])
-    ix = np.clip(pts.round().astype(int), 0, [w - 1, h - 1])
-    d = dist_to_boundary[ix[:, 1], ix[:, 0]]
-    line = np.zeros_like(bmask)
-    line[ix[:, 1], ix[:, 0]] = True
-    dist_to_line = ndimage.distance_transform_edt(~line) * view.mm_per_px
-    return {"dist_mm": round(float(d.mean()), 1), "within5": round(float((d <= 5).mean()), 2),
-            "recall5": round(float((dist_to_line[bmask] <= 5).mean()), 2)}
-
-
-def panel(prepared, hint: Image.Image, overlay: Image.Image) -> Image.Image:
-    return titled_row([("1 model input", prepared.images[0].convert("RGB")), ("2 model output", overlay),
-                       ("3 lobe-segmentation boundaries (imperfect, reference only)", hint)])
+from fissure_annotation.evaluation.proxy_scores import proxy_scores
+from fissure_annotation.evaluation.review_panel import panel
+from fissure_annotation.variants import boundary_polylines, hint_image, prepare
 
 
 def run_variant(case: str, plane: str, idx: int, view, variant: str, model: str) -> dict:

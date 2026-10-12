@@ -17,7 +17,8 @@ from portkey_ai import Portkey
 from fissure_annotation.agent import REASONING, TOOLS, Slice, converse, rgb_data_url, thin
 from fissure_annotation.drawing.model_lines import draw_model_lines
 from fissure_annotation.drawing.panels import contact_sheet, labelled_thumbnail
-from fissure_annotation.experiment import OUT, panel
+from fissure_annotation.config import EXPERIMENT_OUT as OUT
+from fissure_annotation.evaluation.review_panel import panel
 from fissure_annotation.slicing import cut, load_case
 from fissure_annotation.variants import boundary_polylines, hint_image
 

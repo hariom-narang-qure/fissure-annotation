@@ -21,7 +21,9 @@ from fissure_annotation.agent import FULL, TOOLS, Slice, converse, image, text
 from fissure_annotation.config import MODEL, RunConfig
 from fissure_annotation.reviewer import Reviewer
 from fissure_annotation.drawing.model_lines import draw_model_lines
-from fissure_annotation.experiment import OUT, panel, proxy_scores
+from fissure_annotation.config import EXPERIMENT_OUT as OUT
+from fissure_annotation.evaluation.proxy_scores import proxy_scores
+from fissure_annotation.evaluation.review_panel import panel
 from fissure_annotation.slicing import cut, load_case
 from fissure_annotation.variants import boundary_polylines, facts, hint_image, lung_box
 
