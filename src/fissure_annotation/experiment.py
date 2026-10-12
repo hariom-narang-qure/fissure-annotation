@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fissure_annotation.client import ask, parse_json
 from fissure_annotation.config import EXPERIMENT_OUT as OUT, MODEL
+from fissure_annotation.lines import ProposedFissure
 from fissure_annotation.picker import pick_slices
 from fissure_annotation.slicing import cut, load_case
 from fissure_annotation.drawing.model_lines import draw_model_lines
@@ -23,14 +24,15 @@ def run_variant(case: str, plane: str, idx: int, view, variant: str, model: str)
     for attempt in range(2):
         try:
             reply = ask(prepared.images, prepared.prompt, model=model)
-            fissures = parse_json(reply)["fissures"]
+            raw_fissures = parse_json(reply)["fissures"]
+            fissures = [ProposedFissure.model_validate(f) for f in raw_fissures]
             break
         except Exception as e:
             err = str(e)[:200]
     else:
         return {"case": case, "plane": plane, "index": idx, "variant": variant, "error": err}
     (d / f"{variant}.raw.txt").write_text(reply)
-    (d / f"{variant}.json").write_text(json.dumps(fissures, indent=2))
+    (d / f"{variant}.json").write_text(json.dumps(raw_fissures, indent=2))
     overlay = draw_model_lines(prepared.images[0], fissures)
     polys = boundary_polylines(view, prepared.box, prepared.scale)
     hint = hint_image(view, prepared.box, polys, prepared.scale)

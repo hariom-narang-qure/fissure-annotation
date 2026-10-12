@@ -16,6 +16,7 @@ from portkey_ai import Portkey
 
 from fissure_annotation.agent import FULL, Slice, converse, image, text
 from fissure_annotation.config import RunConfig
+from fissure_annotation.lines import Fissure
 from fissure_annotation.reviewer import Reviewer
 from fissure_annotation.slicing import cut
 from fissure_annotation.tools.toolsets import scroll_tools
@@ -116,8 +117,8 @@ class Stack:
             content = content + self.completed(index, mode, args.get("view_id", FULL))
         return content
 
-    def final_by_slice(self, submitted: list[dict]) -> dict[int, list[dict]]:
-        out: dict[int, list[dict]] = {}
+    def final_by_slice(self, submitted: list[dict]) -> dict[int, list[Fissure]]:
+        out: dict[int, list[Fissure]] = {}
         for s in submitted:
             idx = self.owner.get(s["line_id"])
             if idx is None:

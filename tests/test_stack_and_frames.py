@@ -43,7 +43,6 @@ def test_frame_round_trip_between_model_and_slice_pixels(case):
 
 
 def test_view_frame_round_trip_inside_a_zoom(case):
-    sl = Slice(cut(case, "coronal", 30), use_tracer=False)
     box = (200.0, 300.0, 600.0, 700.0)
     main = Slice.local_to_main(250, 750, box)
     assert main == (300.0, 600.0)

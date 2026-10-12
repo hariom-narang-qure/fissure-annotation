@@ -1,11 +1,12 @@
 from PIL import Image
 
 from fissure_annotation.drawing.model_lines import CONFIDENCE_COLOURS, draw_model_lines
+from fissure_annotation.lines import ProposedFissure, Waypoint
 from fissure_annotation.drawing.polylines import POLYLINE_COLOURS, draw_polylines
 
 
-def fissure(confidence: str, y: int) -> dict:
-    return {"waypoints": [{"x": 100, "y": y}, {"x": 900, "y": y}], "side": "right", "confidence": confidence}
+def fissure(confidence: str, y: int) -> ProposedFissure:
+    return ProposedFissure(name="oblique", side="right", confidence=confidence, waypoints=[Waypoint(x=100, y=y), Waypoint(x=900, y=y)])
 
 
 def test_model_lines_are_coloured_by_confidence():
@@ -20,8 +21,8 @@ def test_model_lines_leave_the_input_untouched():
     assert img.getpixel((100, 100)) == (0, 0, 0)
 
 
-def test_unknown_confidence_still_draws():
-    out = draw_model_lines(Image.new("L", (200, 200)), [fissure("???", 500)])
+def test_uncertain_still_draws():
+    out = draw_model_lines(Image.new("L", (200, 200)), [fissure("uncertain", 500)])
     assert out.getpixel((100, 100)) != (0, 0, 0)
 
 

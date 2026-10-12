@@ -12,6 +12,7 @@ from fissure_annotation.config import EXPERIMENT_OUT as OUT, AgentConfig, RunCon
 from fissure_annotation.drawing.model_lines import draw_model_lines
 from fissure_annotation.evaluation.proxy_scores import proxy_scores
 from fissure_annotation.evaluation.review_panel import panel
+from fissure_annotation.lines import Fissure
 from fissure_annotation.scroll_agent import run_scroll
 from fissure_annotation.settings import ExperimentSettings
 from fissure_annotation.slicing import load_case
@@ -46,6 +47,10 @@ def results_file_name(agent: AgentConfig) -> str:
     return {"AGP": "results_scroll_plain.json", "AGR": "results_scroll_review.json", "AGS": "results_scroll.json", "AGN": "results_scroll_notracer.json"}[variant_tag(agent)]
 
 
+def dump_all(fissures: list[Fissure]) -> list[dict]:
+    return [f.model_dump() for f in fissures]
+
+
 def run_one(case, name: str, plane: str, idx: int, agent: AgentConfig) -> dict:
     d = OUT / name / f"{plane}_{idx}"
     tag = variant_tag(agent)
@@ -55,8 +60,8 @@ def run_one(case, name: str, plane: str, idx: int, agent: AgentConfig) -> dict:
     except Exception as e:
         return {"case": name, "plane": plane, "index": idx, "variant": tag, "error": str(e)[:300]}
     sl = r["stack"].get(idx)
-    (d / f"{tag}.json").write_text(json.dumps(r["fissures"], indent=2))
-    (d / f"{tag}_extra.json").write_text(json.dumps({str(k): v for k, v in r["extra"].items()}, indent=2))
+    (d / f"{tag}.json").write_text(json.dumps(dump_all(r["fissures"]), indent=2))
+    (d / f"{tag}_extra.json").write_text(json.dumps({str(k): dump_all(v) for k, v in r["extra"].items()}, indent=2))
     polys = boundary_polylines(sl.view, sl.prepared.box, sl.prepared.scale)
     panel(sl.prepared, hint_image(sl.view, sl.prepared.box, polys, sl.prepared.scale), draw_model_lines(sl.prepared.images[0], r["fissures"])).save(d / f"{tag}.panel.png")
     return {"case": name, "plane": plane, "index": idx, "variant": tag, "n_fissures": len(r["fissures"]), "steps": r["steps"], "tokens": r["usage"],

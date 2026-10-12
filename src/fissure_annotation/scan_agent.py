@@ -19,6 +19,7 @@ from fissure_annotation.drawing.model_lines import draw_model_lines
 from fissure_annotation.drawing.panels import contact_sheet, labelled_thumbnail
 from fissure_annotation.config import EXPERIMENT_OUT as OUT
 from fissure_annotation.evaluation.review_panel import panel
+from fissure_annotation.lines import Fissure
 from fissure_annotation.slicing import cut, load_case
 from fissure_annotation.tools.schemas import TOOLS
 from fissure_annotation.variants import boundary_polylines, hint_image
@@ -101,7 +102,7 @@ class ScanSession:
 
     def submit(self, args: dict) -> dict:
         "per-slice final lines from the traces the model listed, plus the per-fissure findings"
-        by_slice: dict[tuple[str, int], list] = {}
+        by_slice: dict[tuple[str, int], list[Fissure]] = {}
         for f in args["fissures"]:
             name, side = FISSURE_NAMES.get(f["fissure"], ("accessory", f.get("side", "unknown")))
             for t in f["traces"]:
@@ -111,8 +112,7 @@ class ScanSession:
                     continue
                 status = "confirmed" if f["confidence"] == "clear" and f["presence"] == "present" else "uncertain"
                 line = sl.final_fissures([{"line_id": t["line_id"], "status": status, "geometry": t["geometry"], "evidence": f["evidence"]}])[0]
-                line.update(name=name, side=side)
-                by_slice.setdefault(key, []).append(line)
+                by_slice.setdefault(key, []).append(line.model_copy(update={"name": name, "side": side}))
         return by_slice
 
 
@@ -156,7 +156,7 @@ def write_outputs(case_name: str, r: dict) -> dict:
         d = out / f"{plane}_{idx}"
         d.mkdir(parents=True, exist_ok=True)
         sl = sess.slices[(plane, idx)]
-        (d / "SA.json").write_text(json.dumps(lines, indent=2))
+        (d / "SA.json").write_text(json.dumps([f.model_dump() for f in lines], indent=2))
         polys = boundary_polylines(sl.view, sl.prepared.box, sl.prepared.scale)
         panel(sl.prepared, hint_image(sl.view, sl.prepared.box, polys, sl.prepared.scale), draw_model_lines(sl.main, lines)).save(d / "SA.panel.png")
     return {"case": case_name, "steps": r["steps"], "tokens": r["usage"], "opened": sorted(sess.opened),

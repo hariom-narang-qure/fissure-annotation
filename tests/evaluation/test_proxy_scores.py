@@ -2,6 +2,7 @@ import numpy as np
 
 from fissure_annotation.agent import Slice
 from fissure_annotation.evaluation.proxy_scores import polyline_points, proxy_scores
+from fissure_annotation.lines import ProposedFissure, Waypoint
 from fissure_annotation.slicing import cut
 
 
@@ -12,9 +13,9 @@ def boundary_column(sl: Slice) -> int:
     return int(np.nonzero(touching)[0][0])
 
 
-def vertical_fissure_at(sl: Slice, column: int) -> dict:
+def vertical_fissure_at(sl: Slice, column: int) -> ProposedFissure:
     x = sl.to_model(column, 0)[0]
-    return {"waypoints": [{"x": x, "y": 300}, {"x": x, "y": 700}]}
+    return ProposedFissure(name="oblique", side="right", confidence="clear", waypoints=[Waypoint(x=x, y=300), Waypoint(x=x, y=700)])
 
 
 def test_polyline_points_are_spaced_along_the_line_and_keep_both_ends():

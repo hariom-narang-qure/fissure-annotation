@@ -14,6 +14,7 @@ from PIL import Image
 from scipy import ndimage
 
 from fissure_annotation.frames import CropFrame
+from fissure_annotation.lines import Waypoint
 from fissure_annotation.drawing.polylines import draw_polylines
 from fissure_annotation.slicing import LOBE_NAMES, View, boundary_pair
 
@@ -118,6 +119,6 @@ def prepare(view: View, variant: str) -> Prepared:
     return Prepared(images, (PROMPT_V3 if variant == "E" else PROMPT).format(crop_note=note, hint_block=hint, **f), box, scale)
 
 
-def to_slice_pixels(wp: dict, prepared: Prepared) -> tuple[float, float]:
+def to_slice_pixels(wp: Waypoint, prepared: Prepared) -> tuple[float, float]:
     "model 0-1000 coords -> (col, row) in the full isotropic slice"
-    return CropFrame(prepared.box).to_pixels(wp["x"], wp["y"])
+    return CropFrame(prepared.box).to_pixels(wp.x, wp.y)

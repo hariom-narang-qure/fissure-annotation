@@ -43,7 +43,7 @@ def run_slice(case, plane: str, idx: int, out_dir: Path, model: str, scroll: boo
     n = len(r["fissures"])
     side_by_side(sl.main, draw_model_lines(sl.main, r["fissures"]),
                  f"{plane} slice {idx}: left = lung crop, right = agent's lines ({n}); red = clear, yellow = faint{title_extra}").save(out_dir / f"{plane}_{idx:04d}.png")
-    return {"slice": f"{plane}_{idx:04d}", "fissures": [{k: f[k] for k in ("name", "side", "confidence", "evidence", "geometry")} for f in r["fissures"]],
+    return {"slice": f"{plane}_{idx:04d}", "fissures": [{k: getattr(f, k) for k in ("name", "side", "confidence", "evidence", "geometry")} for f in r["fissures"]],
             "steps": r["steps"], "slices_visited": visited}
 
 

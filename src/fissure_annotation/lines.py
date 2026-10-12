@@ -11,9 +11,11 @@ from pydantic import BaseModel, ConfigDict
 
 FissureName = Literal["oblique", "horizontal", "accessory", "unknown"]
 Side = Literal["right", "left"]
+FissureSide = Literal["right", "left", "unknown"]
+"""A fissure the scan agent files as accessory has no side it was told to trust."""
 Geometry = Literal["mine", "traced"]
 Status = Literal["confirmed", "uncertain", "dropped"]
-Confidence = Literal["clear", "faint"]
+Confidence = Literal["clear", "faint", "uncertain"]
 
 CONFIDENCE_OF_STATUS: dict[str, Confidence] = {"confirmed": "clear", "uncertain": "faint"}
 
@@ -34,8 +36,9 @@ class MainPoint(BaseModel):
 class Waypoint(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    x: int
-    y: int
+    x: int | float
+    y: int | float
+    """Whole numbers from the agents. A one-shot reply may hold decimals, which are kept as given."""
 
 
 class Line(BaseModel):
@@ -61,11 +64,24 @@ class SubmittedLine(BaseModel):
     evidence: str
 
 
-class Fissure(BaseModel):
+class DrawableFissure(BaseModel):
+    "what drawing and scoring need from any fissure, whichever pipeline made it"
+
     name: FissureName
-    side: Side
+    side: FissureSide
     confidence: Confidence
     waypoints: list[Waypoint]
+
+
+class ProposedFissure(DrawableFissure):
+    "one fissure from a one-shot reply, before any tool has checked it"
+
+    evidence: str = ""
+
+
+class Fissure(DrawableFissure):
+    "the deliverable of an agent run"
+
     evidence: str
     geometry: Geometry
     fit: FitStats

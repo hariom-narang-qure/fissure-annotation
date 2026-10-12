@@ -220,7 +220,7 @@ class Slice:
     def tick_note(self) -> str:
         return "no tick marks: place points by eye as a fraction of the image width and height" if self.plain else "ticks drawn inside the edges"
 
-    def final_fissures(self, submitted: list[dict]) -> list[dict]:
+    def final_fissures(self, submitted: list[dict]) -> list[Fissure]:
         out = []
         for raw in submitted:
             verdict = SubmittedLine.model_validate(raw)
@@ -229,7 +229,7 @@ class Slice:
                 continue
             geometry = verdict.geometry if line.is_traced else "mine"
             out.append(Fissure(name=line.name, side=line.side, confidence=CONFIDENCE_OF_STATUS[verdict.status], waypoints=self.waypoints_for(line, geometry),
-                               evidence=verdict.evidence, geometry=geometry, fit=line.fit).model_dump())
+                               evidence=verdict.evidence, geometry=geometry, fit=line.fit))
         return out
 
     def waypoints_for(self, line: Line, geometry: str) -> list[Waypoint]:
@@ -336,7 +336,7 @@ def run_one(case: str, plane: str, idx: int, view, model: str) -> dict:
     except Exception as e:
         return {"case": case, "plane": plane, "index": idx, "variant": "AG", "error": str(e)[:300]}
     sl = r["slice"]
-    (d / "AG.json").write_text(json.dumps(r["fissures"], indent=2))
+    (d / "AG.json").write_text(json.dumps([f.model_dump() for f in r["fissures"]], indent=2))
     overlay = draw_model_lines(sl.main, r["fissures"])
     polys = boundary_polylines(view, sl.prepared.box, sl.prepared.scale)
     panel(sl.prepared, hint_image(view, sl.prepared.box, polys, sl.prepared.scale), overlay).save(d / "AG.panel.png")
