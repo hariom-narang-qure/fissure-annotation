@@ -10,17 +10,19 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 from scipy import ndimage
 
-from fissure_annotation.slicing import LOBE_NAMES, View, boundary_mask
+from fissure_annotation.frames import CropFrame
+from fissure_annotation.lines import Waypoint
+from fissure_annotation.drawing.polylines import draw_polylines
+from fissure_annotation.slicing import LOBE_NAMES, View, boundary_pair
 
 PROMPT = (Path(__file__).parents[2] / "prompts" / "fissure_v2.txt").read_text()
 PROMPT_V3 = (Path(__file__).parents[2] / "prompts" / "fissure_v3.txt").read_text()   # variant E = D + mistake rules
 TARGET_LONG_SIDE = 1024
 CROP_MARGIN_MM = 6
 MIN_COMPONENT_FRACTION = 0.02
-PAIR_COLOURS = ["red", "lime", "cyan", "magenta", "orange", "yellow", "deepskyblue"]
 
 
 @dataclass
@@ -75,10 +77,6 @@ def boundary_polylines(view: View, box, scale: float, n_points: int = 5) -> list
     return out
 
 
-def boundary_pair(lobes: np.ndarray, a: int, b: int) -> np.ndarray:
-    return boundary_mask(np.where(np.isin(lobes, [a, b]), lobes, 0))
-
-
 def hint_text(polys) -> str:
     lines = "\n".join(f"- {name}: " + " -> ".join(f"({x},{y})" for x, y in pts) for name, pts in polys)
     return ("\nHint from an automatic lobe segmentation (it is imperfect: boundaries can be shifted by several mm, "
@@ -90,10 +88,8 @@ def hint_text(polys) -> str:
 
 def hint_image(view: View, box, polys, scale: float) -> Image.Image:
     img, _ = upscaled(view, box)
-    rgb = img.convert("RGB"); d = ImageDraw.Draw(rgb)
-    for k, (name, pts) in enumerate(polys):
-        px = [(x / 1000 * rgb.width, y / 1000 * rgb.height) for x, y in pts]
-        d.line(px, fill=PAIR_COLOURS[k % len(PAIR_COLOURS)], width=2)
+    rgb = img.convert("RGB")
+    draw_polylines(rgb, [points for _, points in polys])
     return rgb
 
 
@@ -123,7 +119,6 @@ def prepare(view: View, variant: str) -> Prepared:
     return Prepared(images, (PROMPT_V3 if variant == "E" else PROMPT).format(crop_note=note, hint_block=hint, **f), box, scale)
 
 
-def to_slice_pixels(wp: dict, prepared: Prepared) -> tuple[float, float]:
+def to_slice_pixels(wp: Waypoint, prepared: Prepared) -> tuple[float, float]:
     "model 0-1000 coords -> (col, row) in the full isotropic slice"
-    c0, r0, c1, r1 = prepared.box
-    return c0 + wp["x"] / 1000 * (c1 - c0), r0 + wp["y"] / 1000 * (r1 - r0)
+    return CropFrame(prepared.box).to_pixels(wp.x, wp.y)

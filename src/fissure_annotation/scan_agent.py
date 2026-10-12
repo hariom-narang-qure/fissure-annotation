@@ -6,20 +6,22 @@ right oblique, right horizontal, left oblique (and accessory) a presence call pl
 """
 import json
 import os
-import sys
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 from portkey_ai import Portkey
 
-from fissure_annotation.agent import REASONING, TOOLS, Slice, converse, rgb_data_url, thin
-from fissure_annotation.experiment import OUT, draw_model_lines, panel
-from fissure_annotation.slicing import cut, load_case
+from fissure_annotation.agent import REASONING, Slice, converse, rgb_data_url
+from fissure_annotation.drawing.model_lines import draw_model_lines
+from fissure_annotation.drawing.panels import contact_sheet, labelled_thumbnail
+from fissure_annotation.config import EXPERIMENT_OUT as OUT
+from fissure_annotation.evaluation.review_panel import panel
+from fissure_annotation.lines import Fissure
+from fissure_annotation.slicing import cut
+from fissure_annotation.tools.schemas import TOOLS
 from fissure_annotation.variants import boundary_polylines, hint_image
 
-MODEL = "@openai/gpt-6.1-sol"
 PROMPT = (Path(__file__).parents[2] / "prompts" / "fissure_scan_agent.txt").read_text()
 MAX_STEPS = 50
 OVERVIEW_FRACTIONS = {"coronal": [0.3, 0.45, 0.6, 0.75], "axial": [0.2, 0.4, 0.6, 0.8]}
@@ -71,17 +73,8 @@ class ScanSession:
             for f in fracs:
                 idx = int(lo + f * (hi - lo))
                 img = self.get(plane, idx).main
-                scale = THUMB / max(img.size)
-                tile = img.resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
-                ImageDraw.Draw(tile).text((4, 4), f"{plane}:{idx}", fill=(255, 255, 0))
-                tiles.append(tile)
-        cols = 4
-        rows = -(-len(tiles) // cols)
-        cell_w, cell_h = max(t.width for t in tiles), max(t.height for t in tiles)
-        sheet = Image.new("RGB", (cols * cell_w, rows * cell_h), "black")
-        for i, t in enumerate(tiles):
-            sheet.paste(t, ((i % cols) * cell_w, (i // cols) * cell_h))
-        return sheet
+                tiles.append(labelled_thumbnail(img, THUMB, f"{plane}:{idx}"))
+        return contact_sheet(tiles, columns=4)
 
     def current_slice(self) -> Slice:
         if self.current is None:
@@ -106,7 +99,7 @@ class ScanSession:
 
     def submit(self, args: dict) -> dict:
         "per-slice final lines from the traces the model listed, plus the per-fissure findings"
-        by_slice: dict[tuple[str, int], list] = {}
+        by_slice: dict[tuple[str, int], list[Fissure]] = {}
         for f in args["fissures"]:
             name, side = FISSURE_NAMES.get(f["fissure"], ("accessory", f.get("side", "unknown")))
             for t in f["traces"]:
@@ -116,12 +109,11 @@ class ScanSession:
                     continue
                 status = "confirmed" if f["confidence"] == "clear" and f["presence"] == "present" else "uncertain"
                 line = sl.final_fissures([{"line_id": t["line_id"], "status": status, "geometry": t["geometry"], "evidence": f["evidence"]}])[0]
-                line.update(name=name, side=side)
-                by_slice.setdefault(key, []).append(line)
+                by_slice.setdefault(key, []).append(line.model_copy(update={"name": name, "side": side}))
         return by_slice
 
 
-def run_scan(case_name: str, case, model: str, log_dir: Path) -> dict:
+def run_scan(case_name: str, case, model: str, log_dir: Path, max_steps: int = MAX_STEPS) -> dict:
     log_dir.mkdir(parents=True, exist_ok=True)
     client = Portkey(api_key=os.environ["PORTKEY_API_KEY"])
     sess = ScanSession(case)
@@ -140,12 +132,12 @@ def run_scan(case_name: str, case, model: str, log_dir: Path) -> dict:
             content = sess.open_slice(**args)
         else:
             sl = sess.current_slice()
-            content, img = {"snap": sl.snap_tool, "overlay": sl.overlay_tool, "zoom": sl.zoom_tool}[call.name](**args)
+            content, img = sl.tool_methods()[call.name](**args)
             if img is not None:
                 img.save(log_dir / f"step{step:02d}_{call.name}_{call.call_id[-6:]}.png")
         return content
 
-    finished, transcript, usage, steps = converse(client, kw, first, handle, "submit_scan", MAX_STEPS)
+    finished, transcript, usage, steps = converse(client, kw, first, handle, "submit_scan", max_steps)
     (log_dir / "transcript.json").write_text(json.dumps({"transcript": transcript, "submitted": finished, "usage": usage}, indent=1))
     return {"sess": sess, "submitted": finished, "usage": usage, "steps": steps}
 
@@ -161,30 +153,8 @@ def write_outputs(case_name: str, r: dict) -> dict:
         d = out / f"{plane}_{idx}"
         d.mkdir(parents=True, exist_ok=True)
         sl = sess.slices[(plane, idx)]
-        (d / "SA.json").write_text(json.dumps(lines, indent=2))
+        (d / "SA.json").write_text(json.dumps([f.model_dump() for f in lines], indent=2))
         polys = boundary_polylines(sl.view, sl.prepared.box, sl.prepared.scale)
         panel(sl.prepared, hint_image(sl.view, sl.prepared.box, polys, sl.prepared.scale), draw_model_lines(sl.main, lines)).save(d / "SA.panel.png")
     return {"case": case_name, "steps": r["steps"], "tokens": r["usage"], "opened": sorted(sess.opened),
             "findings": {f["fissure"]: (f["presence"], f["confidence"]) for f in sub["fissures"]}, "slices_with_lines": sorted(by_slice)}
-
-
-def main():
-    "scan_agent <cases.json> [model]"
-    cases = json.load(open(sys.argv[1]))
-    model = sys.argv[2] if len(sys.argv) > 2 else MODEL
-
-    def one(item):
-        name, (scan, lobe_dir) = item
-        try:
-            return write_outputs(name, run_scan(name, load_case(scan, lobe_dir), model, OUT / name / "scan_agent_log"))
-        except Exception as e:
-            return {"case": name, "error": str(e)[:300]}
-
-    with ThreadPoolExecutor(5) as ex:
-        results = list(ex.map(one, cases.items()))
-    (OUT / "results_scan_agent.json").write_text(json.dumps(results, indent=1, default=str))
-    print(json.dumps(results, indent=1, default=str))
-
-
-if __name__ == "__main__":
-    main()

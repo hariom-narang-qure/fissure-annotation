@@ -1,4 +1,4 @@
-import base64, io, json, os, re
+import base64, io, json, os
 from pathlib import Path
 
 from PIL import Image

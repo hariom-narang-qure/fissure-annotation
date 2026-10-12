@@ -2,6 +2,25 @@
 
 Research prototype, not clinical. Nothing here is validated against expert annotation.
 
+## Rerunning a round
+
+The command line flags used in the rounds below were replaced by YAML configs and `scripts/`. Mapping:
+
+| Round | Setup | Config |
+|---|---|---|
+| one-shot E | prompt variant E | `configs/one_shot_e.yaml`, `scripts/run_one_shot.py` |
+| 2 to 4 | single-slice agent | `configs/slice_agent.yaml`, `scripts/run_slice_agent.py` |
+| 3, 4 | per-scan agent | `configs/scan_agent.yaml`, `scripts/run_scan.py` |
+| 5 | scrolling, tracer | `configs/scroll_tracer.yaml`, `scripts/run_scroll.py` |
+| 7 to 10, 12 | scrolling, no tracer (`--no-tracer`) | `configs/scroll_current.yaml` |
+| 11 | reviewer (`--review`) | `configs/scroll_reviewer.yaml` |
+| 13 | plain PNGs (`--plain`) | `configs/scroll_plain.yaml` |
+| any | two slices, to check a change quickly | `configs/scroll_smoke.yaml` |
+
+- `--max-steps N` is now `--agent.max-steps N`, and the other flags follow the same pattern (`--agent.use-tracer false`).
+- Round 6 (one lung per run) was removed from the tree. It can be recovered from git history.
+- Names like `scroll_agent.main` and `RunConfig.use_tracer` in the rounds below are as they were at the time.
+
 ## Setup facts (verified)
 
 - Model: `@openai/gpt-6.1-sol` via Portkey. Needs `max_completion_tokens` (not `max_tokens`). Reasoning text is not exposed, only the token count (`reasoning_tokens`). About 700 tokens and ~30 s per slice.
@@ -145,7 +164,7 @@ Result: no clear accuracy gain from one lung per run. Placement (ON %) is level 
 
 ### Decision after round 6
 
-Half-lung (one lung per run) framing is not pursued for now: it was level with the both-lung scrolling agent on placement, missed fewer fissures, drew about twice as many non-fissure lines, and cost ~1.6x the tokens. Work continues on the full-lung scrolling agent (`scroll_agent.py`). `side_agent.py`, `config.py` (RunConfig) and the half-lung review pack option are kept in the tree for later but unused. Plausible reasons the crop made little difference (untested): the agent already works in zoomed views, so the starting crop matters little; the two-lung crop was already handled lung by lung; telling a run to annotate one lung may push it to produce lines. A narrower focus, one fissure per run ("only the right horizontal"), with "none visible" an expected answer, is an untested alternative.
+Half-lung (one lung per run) framing is not pursued for now: it was level with the both-lung scrolling agent on placement, missed fewer fissures, drew about twice as many non-fissure lines, and cost ~1.6x the tokens. Work continues on the full-lung scrolling agent (`scroll_agent.py`). `side_agent.py`, `prompts/fissure_side_agent.txt`, `slicing.side_view` and the half-lung review pack option were later removed from the tree (see git history before the "remove side agent" commit).
 
 ## Round 7: scrolling agent with the tracer switched off (`RunConfig.use_tracer=False`)
 

@@ -6,7 +6,7 @@ right, so x is reversed here. v1 (`slice.py`) did not reverse it and sent mirror
 
 In-plane pixels are resampled to be square (mm) so a 0.3 mm-slice scan is not shown stretched.
 """
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 import nibabel as nib
@@ -17,7 +17,6 @@ from scipy import ndimage
 LUNG_CENTRE, LUNG_WIDTH = -600, 1500
 LOBE_FILES = ["left_upper_lobe", "left_lower_lobe", "right_upper_lobe", "right_middle_lobe", "right_lower_lobe"]
 LOBE_NAMES = {i + 1: n.replace("_", " ") for i, n in enumerate(LOBE_FILES)}
-SIDE_LABELS = {"left": (1, 2), "right": (3, 4, 5)}      # label numbers follow LOBE_FILES
 
 
 @dataclass
@@ -75,11 +74,6 @@ def orient(a: np.ndarray) -> np.ndarray:
     return a[::-1, ::-1].T
 
 
-def side_view(view: View, side: str) -> View:
-    "the same slice with only one lung's lobe labels kept: crops, hints and the tracer then see that lung only"
-    return replace(view, lobes=np.where(np.isin(view.lobes, SIDE_LABELS[side]), view.lobes, 0))
-
-
 def lung_extent(case: Case, axis: int) -> tuple[int, int]:
     "first/last index along `axis` (0=x,1=y,2=z) where any lobe voxel exists"
     present = np.nonzero((case.lobes > 0).any(axis=tuple(i for i in range(3) if i != axis)))[0]
@@ -96,6 +90,11 @@ def boundary_mask(lobes: np.ndarray) -> np.ndarray:
         out[sl_a] |= diff
         out[sl_b] |= diff
     return out
+
+
+def boundary_pair(lobes: np.ndarray, a: int, b: int) -> np.ndarray:
+    "the boundary between lobes `a` and `b` only, ignoring every other lobe"
+    return boundary_mask(np.where(np.isin(lobes, [a, b]), lobes, 0))
 
 
 def save_png(img: np.ndarray, path) -> None:

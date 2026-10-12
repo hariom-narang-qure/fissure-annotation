@@ -1,0 +1,4 @@
+# Round 5: the scrolling agent with the ridge tracer.
+cases: work/cases.json
+agent:
+  use_tracer: true

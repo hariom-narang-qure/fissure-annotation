@@ -9,64 +9,37 @@ Chat completions refuses function tools while reasoning is on for gpt-6.1-sol, s
 previous_response_id (the server keeps the conversation, including the model's reasoning, between turns).
 """
 import base64
+from collections.abc import Callable
 import io
 import json
 import os
-import sys
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 from portkey_ai import Portkey
 
-from fissure_annotation.client import png_data_url
-from fissure_annotation.experiment import OUT, panel, proxy_scores
-from fissure_annotation.slicing import LOBE_NAMES, cut, load_case, lung_window
+from fissure_annotation.drawing.lines import draw_marked_line, draw_traced_line, line_colour
+from fissure_annotation.lines import CONFIDENCE_OF_STATUS, Fissure, Line, MainPoint, SubmittedLine, Waypoint
+from fissure_annotation.frames import CropFrame, main_to_view, view_to_main
+from fissure_annotation.drawing.compose import tile_row
+from fissure_annotation.drawing.lobes import draw_lobe_boundaries
+from fissure_annotation.drawing.rings import draw_point_rings
+from fissure_annotation.drawing.ticks import draw_ticks
+from fissure_annotation.tools.schemas import TOOLS
+from fissure_annotation.slicing import lung_window
 from fissure_annotation.tracing import lung_mask, ridge_map, snap
-from fissure_annotation.variants import Prepared, boundary_pair, boundary_polylines, facts, hint_image, prepare, to_slice_pixels, upscaled
+from fissure_annotation.variants import Prepared, boundary_polylines, facts, hint_image, prepare, upscaled
 
 MODEL = "@openai/gpt-6.1-sol"
 PROMPT = (Path(__file__).parents[2] / "prompts" / "fissure_agent.txt").read_text()
 MAX_STEPS = 12
 REASONING = {"effort": "medium"}
-COLOURS = [(255, 40, 40), (255, 220, 0), (0, 255, 120), (0, 200, 255), (255, 0, 255), (255, 140, 0)]
 ZOOM_LONG_SIDE = 900
-TICK_MARGIN = 34
 
-VIEW_PROPS = {
-    "view_id": {"type": "string", "description": "the view whose image you are looking at: 'full' (the first image) or an id returned by zoom. Coordinates you give and receive are in this view's own 0-1000 frame."}}
 CONTRASTS = {"normal": (-600, 1500), "high": (-650, 700)}      # (centre, width) HU; 'high' stretches the -1000..-300 range where fissures live
-PAIR_COLOURS = [(255, 60, 60), (60, 255, 60), (60, 200, 255), (255, 0, 255), (255, 160, 0), (255, 255, 0), (0, 255, 200), (180, 120, 255), (255, 120, 180), (160, 255, 60)]
 FULL = "full"
-
-TOOLS = [
-    {"type": "function", "name": "zoom",
-     "description": "Look closely: a magnified crop of the clean slice as a new view. Coordinates x0,y0,x1,y1 are in the frame of `view_id` (default: the full image), so you can zoom into a zoom. Returns the new view's id; from then on, give and receive coordinates in the new view's own 0-1000 frame (ticks are drawn inside the image edges, in that frame).",
-     "parameters": {"type": "object", "properties": {**{k: {"type": "integer", "minimum": 0, "maximum": 1000} for k in ("x0", "y0", "x1", "y1")}, **VIEW_PROPS,
-                    "contrast": {"type": "string", "enum": ["normal", "high"], "description": "high = narrower window that makes a faint fissure stand out against the lung"},
-                    "lobes": {"type": "boolean", "description": "also draw approximate lobe boundaries from the automatic segmentation (imperfect), with a colour legend"}},
-                    "required": ["x0", "y0", "x1", "y1"]}},
-    {"type": "function", "name": "snap",
-     "description": "Trace a fissure. Give 2-6 waypoints along it (ordered from one end to the other) in the frame of `view_id`. A ridge tracer moves each waypoint across the line to the nearest ridge and joins them by a minimal-cost path. The line is stored (numbered) in full-image coordinates, and you get back the traced points in the same view frame, fit statistics, and the view image with the line drawn (thick coloured = traced, thin white = your own waypoints). Pass line_id to redo an existing line.",
-     "parameters": {"type": "object", "properties": {
-         "waypoints": {"type": "array", "minItems": 2, "items": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}, "required": ["x", "y"]}},
-         **VIEW_PROPS,
-         "line_id": {"type": "integer", "description": "existing line to replace; omit for a new line"},
-         "name": {"type": "string", "enum": ["oblique", "horizontal", "accessory", "unknown"]},
-         "side": {"type": "string", "enum": ["right", "left"]}},
-         "required": ["waypoints", "name", "side"]}},
-    {"type": "function", "name": "overlay",
-     "description": "Compare: the clean view next to the same view with lines drawn and numbered (all lines if line_ids omitted; lines outside the view are simply not visible). Use a zoomed view_id to check a line closely.",
-     "parameters": {"type": "object", "properties": {**VIEW_PROPS, "line_ids": {"type": "array", "items": {"type": "integer"}},
-                    "lobes": {"type": "boolean", "description": "also draw approximate lobe boundaries, with a colour legend"}}}},
-    {"type": "function", "name": "submit", "description": "Finish. Lines not listed are dropped.",
-     "parameters": {"type": "object", "properties": {"lines": {"type": "array", "items": {"type": "object", "properties": {
-         "line_id": {"type": "integer"}, "status": {"type": "string", "enum": ["confirmed", "uncertain", "dropped"]},
-         "geometry": {"type": "string", "enum": ["mine", "traced"], "description": "which geometry to keep: your own waypoints, or the traced path"},
-         "evidence": {"type": "string"}}, "required": ["line_id", "status", "geometry", "evidence"]}}}, "required": ["lines"]}},
-]
-
+CONNECT_COLOUR = (255, 255, 0)
 
 def thin(path: np.ndarray, n: int) -> np.ndarray:
     "about n evenly spaced vertices of a per-pixel path, keeping both ends"
@@ -102,8 +75,9 @@ class Slice:
         self.next_id = None            # a stack sets this so line ids are unique across slices
         self.use_tracer = use_tracer
         self.score = ridge_map(view.image, lung_mask(view.lobes)) if use_tracer else None
-        self.lines: dict[int, dict] = {}
+        self.lines: dict[int, Line] = {}
         self.plain = plain
+        self.frame = CropFrame(self.prepared.box)
         c0, r0, c1, r1 = self.prepared.box
         self.native_long_side = max(c1 - c0, r1 - r0)      # the crop's own size in slice pixels
         self.main = (Image.fromarray(view.image[r0:r1, c0:c1]).convert("RGB") if plain else self.prepared.images[0].convert("RGB"))
@@ -111,28 +85,18 @@ class Slice:
 
     # ---- frames
     def to_model(self, col: float, row: float) -> tuple[int, int]:
-        "slice pixel -> main frame"
-        c0, r0, c1, r1 = self.prepared.box
-        return round((col - c0) / (c1 - c0) * 1000), round((row - r0) / (r1 - r0) * 1000)
+        return self.frame.to_main(col, row)
 
     def to_px(self, x: float, y: float) -> tuple[float, float]:
-        "main frame -> slice pixel (col, row)"
-        return to_slice_pixels({"x": x, "y": y}, self.prepared)
+        return self.frame.to_pixels(x, y)
 
     def box(self, view_id: str) -> tuple[float, float, float, float]:
         if view_id not in self.views:
             raise KeyError(f"unknown view_id {view_id!r}; known: {sorted(self.views)}")
         return self.views[view_id]["box"]
 
-    @staticmethod
-    def local_to_main(x: float, y: float, box) -> tuple[float, float]:
-        x0, y0, x1, y1 = box
-        return x0 + x / 1000 * (x1 - x0), y0 + y / 1000 * (y1 - y0)
-
-    @staticmethod
-    def main_to_local(x: float, y: float, box) -> tuple[float, float]:
-        x0, y0, x1, y1 = box
-        return (x - x0) / (x1 - x0) * 1000, (y - y0) / (y1 - y0) * 1000
+    local_to_main = staticmethod(view_to_main)
+    main_to_local = staticmethod(main_to_view)
 
     # ---- rendering
     def render(self, view_id: str, lobes: bool = False) -> tuple[Image.Image, list[str]]:
@@ -146,43 +110,28 @@ class Slice:
         img = crop.resize((round(crop.width * scale), round(crop.height * scale)), Image.LANCZOS).convert("RGB")
         legend = []
         if lobes:
-            legend = self.draw_lobes(img, self.view.lobes[ra:rb, ca:cb])
+            legend = draw_lobe_boundaries(img, self.view.lobes[ra:rb, ca:cb])
         if not self.plain:
             draw_ticks(img)
         return img, legend
 
-    def draw_lobes(self, img: Image.Image, sub: np.ndarray) -> list[str]:
-        legend = []
-        px = img.load()
-        for k, (a, b) in enumerate([(a, b) for a in range(1, 6) for b in range(a + 1, 6)]):
-            m = boundary_pair(sub, a, b)
-            if m.sum() < 6:
-                continue
-            big = np.array(Image.fromarray(m.astype(np.uint8) * 255).resize(img.size, Image.NEAREST)) > 0
-            for y, x in zip(*np.nonzero(big)):      # half transparent, so the fissure underneath stays visible
-                px[int(x), int(y)] = tuple((o + c) // 2 for o, c in zip(px[int(x), int(y)], PAIR_COLOURS[k]))
-            legend.append(f"{COLOUR_NAMES[k]} = {LOBE_NAMES[a]} / {LOBE_NAMES[b]}")
-        return legend
-
     def draw_lines(self, img: Image.Image, view_id: str, ids: list[int]) -> None:
         box = self.box(view_id)
-        d = ImageDraw.Draw(img)
         w, h = img.size
-        to_img = lambda x, y: (lambda lx, ly: (lx / 1000 * w, ly / 1000 * h))(*self.main_to_local(x, y, box))
+
+        def to_img(x: float, y: float) -> tuple[float, float]:
+            lx, ly = self.main_to_local(x, y, box)
+            return lx / 1000 * w, ly / 1000 * h
+
         for k, i in enumerate(ids):
-            col = COLOURS[k % len(COLOURS)]
             line = self.lines[i]
-            own = [to_img(p["x"], p["y"]) for p in line["mine"]]
-            if line["path"] is None:             # no tracer: the model's own line, with its points marked
-                d.line(own, fill=col, width=2)
-                for x, y in own:
-                    d.ellipse([x - 3, y - 3, x + 3, y + 3], outline=col)
-                xy = own
+            own = [to_img(p.x, p.y) for p in line.own_points]
+            label = f"{i} {line.side[0].upper()}"
+            if not line.is_traced:
+                draw_marked_line(img, own, line_colour(k), label)
             else:
-                d.line(own, fill=(255, 255, 255), width=1)
-                xy = [to_img(*self.to_model(c, r)) for r, c in line["path"]]
-                d.line(xy, fill=col, width=2)
-            d.text((xy[0][0] + 5, xy[0][1] - 14), f"{i} {line['side'][0].upper()}", fill=col)
+                traced = [to_img(*self.to_model(c, r)) for r, c in line.traced_path]
+                draw_traced_line(img, own, traced, line_colour(k), label)
 
     # ---- tools: each returns (content, image or None)
     def zoom_tool(self, x0, y0, x1, y1, view_id=FULL, contrast="normal", lobes=False):
@@ -213,17 +162,10 @@ class Slice:
             return [text("no waypoints given")], None
         clean, _ = self.render(view_id)
         marked = clean.copy()
-        d = ImageDraw.Draw(marked)
         w, h = marked.size
         pts = [(p["x"] / 1000 * w, p["y"] / 1000 * h) for p in waypoints]
-        if connect:
-            d.line(pts, fill=(255, 255, 0), width=1)
-        for k, (x, y) in enumerate(pts, start=1):
-            d.ellipse([x - 5, y - 5, x + 5, y + 5], outline=(255, 0, 255), width=2)
-            d.text((x + 8, y - 15), str(k), fill=(255, 0, 255))
-        both = Image.new("RGB", (w * 2 + 8, h), "black")
-        both.paste(clean, (0, 0))
-        both.paste(marked, (w + 8, 0))
+        draw_point_rings(marked, pts, join_colour=CONNECT_COLOUR if connect else None)
+        both = tile_row([clean, marked])
         outside = [k for k, p in enumerate(waypoints, start=1) if not (0 <= p["x"] <= 1000 and 0 <= p["y"] <= 1000)]
         note = f"view {view_id}: left = clean, right = your {len(pts)} points as numbered rings (nothing stored)" + (f"; points outside this view: {outside}" if outside else "")
         return [text(note), image(both)], both
@@ -233,7 +175,7 @@ class Slice:
         box = self.box(view_id)
         main_pts = [self.local_to_main(w["x"], w["y"], box) for w in waypoints]
         lid, note = self.line_id_for(line_id)
-        self.lines[lid] = {"name": name, "side": side, "path": None, "stats": {}, "mine": [{"x": round(x, 1), "y": round(y, 1)} for x, y in main_pts]}
+        self.lines[lid] = Line(name=name, side=side, own_points=own_points(main_pts))
         img, _ = self.render(view_id)
         self.draw_lines(img, view_id, [lid])
         local = [self.main_to_local(x, y, box) for x, y in main_pts]
@@ -245,8 +187,7 @@ class Slice:
         rc = [(self.to_px(x, y)[1], self.to_px(x, y)[0]) for x, y in main_pts]
         s = snap(self.score, rc, self.view.mm_per_px)
         lid, note = self.line_id_for(line_id)
-        self.lines[lid] = {"name": name, "side": side, "path": s.path, "stats": s.stats,
-                           "mine": [{"x": round(x, 1), "y": round(y, 1)} for x, y in main_pts]}
+        self.lines[lid] = Line(name=name, side=side, own_points=own_points(main_pts), traced_path=s.path, fit=s.stats)
         local = [self.main_to_local(*self.to_model(c, r), box) for r, c in thin(s.path, 8)]
         outside = any(not (0 <= x <= 1000 and 0 <= y <= 1000) for x, y in local)
         img, _ = self.render(view_id)
@@ -260,28 +201,39 @@ class Slice:
         clean, legend = self.render(view_id, lobes)
         drawn = clean.copy()
         self.draw_lines(drawn, view_id, ids)
-        both = Image.new("RGB", (clean.width * 2 + 8, clean.height), "black")
-        both.paste(clean, (0, 0))
-        both.paste(drawn, (clean.width + 8, 0))
+        both = tile_row([clean, drawn])
         legend = ("thin white = your own waypoints, thick coloured = traced path" if self.use_tracer else "your lines, with circles at your points")
         return [text(f"view {view_id}: left = clean, right = lines {ids} drawn ({legend})"
                      + ("; lobe boundaries: " + "; ".join(legend) if lobes else "")), image(both)], both
 
+    def tool_methods(self) -> dict[str, Callable]:
+        "the name the model calls -> the method that runs it. `look` and `submit` are handled by the caller, not the slice"
+        return {"zoom": self.zoom_tool, "overlay": self.overlay_tool, "check_points": self.check_points_tool,
+                **({"snap": self.snap_tool} if self.use_tracer else {"mark": self.mark_tool})}
+
     def tick_note(self) -> str:
         return "no tick marks: place points by eye as a fraction of the image width and height" if self.plain else "ticks drawn inside the edges"
 
-    def final_fissures(self, submitted):
+    def final_fissures(self, submitted: list[dict]) -> list[Fissure]:
         out = []
-        for s in submitted:
-            line = self.lines.get(s["line_id"])
-            if line is None or s["status"] == "dropped":
+        for raw in submitted:
+            verdict = SubmittedLine.model_validate(raw)
+            line = self.lines.get(verdict.line_id)
+            if line is None or verdict.status == "dropped":
                 continue
-            geometry = s.get("geometry", "mine") if line["path"] is not None else "mine"
-            waypoints = ([{"x": round(p["x"]), "y": round(p["y"])} for p in line["mine"]] if geometry == "mine"
-                         else [dict(zip("xy", self.to_model(c, r))) for r, c in thin(line["path"], 12)])
-            out.append({"name": line["name"], "side": line["side"], "confidence": {"confirmed": "clear", "uncertain": "faint"}[s["status"]],
-                        "waypoints": waypoints, "evidence": s["evidence"], "geometry": geometry, "fit": line["stats"]})
+            geometry = verdict.geometry if line.is_traced else "mine"
+            out.append(Fissure(name=line.name, side=line.side, confidence=CONFIDENCE_OF_STATUS[verdict.status], waypoints=self.waypoints_for(line, geometry),
+                               evidence=verdict.evidence, geometry=geometry, fit=line.fit))
         return out
+
+    def waypoints_for(self, line: Line, geometry: str) -> list[Waypoint]:
+        if geometry == "mine":
+            return [Waypoint(x=round(p.x), y=round(p.y)) for p in line.own_points]
+        return [Waypoint(x=x, y=y) for x, y in (self.to_model(c, r) for r, c in thin(line.traced_path, 12))]
+
+
+def own_points(main_points: list[tuple[float, float]]) -> list[MainPoint]:
+    return [MainPoint(x=round(x, 1), y=round(y, 1)) for x, y in main_points]
 
 
 def fixed_prepared(view, box) -> Prepared:
@@ -289,20 +241,6 @@ def fixed_prepared(view, box) -> Prepared:
     return Prepared([img], "", box, scale)
 
 
-COLOUR_NAMES = ["red", "green", "light blue", "magenta", "orange", "yellow", "turquoise", "violet", "pink", "lime"]
-
-
-def draw_ticks(img: Image.Image) -> None:
-    "tick marks every 100 units on all edges and labels on the left and top edges, drawn inside the image so its frame is exactly 0-1000"
-    d = ImageDraw.Draw(img)
-    w, h = img.size
-    for v in range(0, 1001, 100):
-        x, y = v / 1000 * (w - 1), v / 1000 * (h - 1)
-        for xy in ([(x, 0), (x, 8)], [(x, h - 1), (x, h - 9)], [(0, y), (8, y)], [(w - 1, y), (w - 9, y)]):
-            d.line(xy, fill=(255, 255, 0), width=1)
-        if 0 < v < 1000:
-            d.text((x + 2, 9), str(v), fill=(255, 255, 0))
-            d.text((10, y - 5), str(v), fill=(255, 255, 0))
 
 
 def initial_input(sl: Slice) -> list[dict]:
@@ -315,7 +253,7 @@ def initial_input(sl: Slice) -> list[dict]:
 
 def run_tool(sl: Slice, call, log_dir: Path, step: int):
     args = json.loads(call.arguments)
-    tools = {"snap": sl.snap_tool, "overlay": sl.overlay_tool, "zoom": sl.zoom_tool}
+    tools = sl.tool_methods()
     if call.name not in tools:
         return [text(f"unknown tool {call.name}")], None
     content, img = tools[call.name](**args)
@@ -383,41 +321,3 @@ def run_agent(view, model: str, log_dir: Path) -> dict:
     fissures = sl.final_fissures(submitted)
     (log_dir / "transcript.json").write_text(json.dumps({"transcript": transcript, "submitted": submitted, "usage": usage}, indent=1))
     return {"fissures": fissures, "steps": steps, "usage": usage, "submitted_explicitly": finished is not None, "slice": sl}
-
-
-def run_one(case: str, plane: str, idx: int, view, model: str) -> dict:
-    d = OUT / case / f"{plane}_{idx}"
-    try:
-        r = run_agent(view, model, d / "agent_log")
-    except Exception as e:
-        return {"case": case, "plane": plane, "index": idx, "variant": "AG", "error": str(e)[:300]}
-    sl = r["slice"]
-    (d / "AG.json").write_text(json.dumps(r["fissures"], indent=2))
-    from fissure_annotation.experiment import draw_model_lines
-    overlay = draw_model_lines(sl.main, r["fissures"])
-    polys = boundary_polylines(view, sl.prepared.box, sl.prepared.scale)
-    panel(sl.prepared, hint_image(view, sl.prepared.box, polys, sl.prepared.scale), overlay).save(d / "AG.panel.png")
-    return {"case": case, "plane": plane, "index": idx, "variant": "AG", "n_fissures": len(r["fissures"]), "steps": r["steps"],
-            "tokens": r["usage"], **proxy_scores(view, r["fissures"], sl.prepared)}
-
-
-def main():
-    "agent <cases.json> [model] [only_case_substring]"
-    cases = json.load(open(sys.argv[1]))
-    model = sys.argv[2] if len(sys.argv) > 2 else MODEL
-    only = sys.argv[3] if len(sys.argv) > 3 else ""
-    jobs = []
-    for name, (scan, lobe_dir) in cases.items():
-        if only not in name:
-            continue
-        case = load_case(scan, lobe_dir)
-        for plane, idx in json.load(open(OUT / name / "picks.json")):
-            jobs.append((name, plane, idx, cut(case, plane, idx)))
-    with ThreadPoolExecutor(5) as ex:
-        results = list(ex.map(lambda j: run_one(*j[:3], j[3], model), jobs))
-    (OUT / f"results_AG_{model.split('/')[-1]}.json").write_text(json.dumps(results, indent=1))
-    print(json.dumps(results, indent=1))
-
-
-if __name__ == "__main__":
-    main()

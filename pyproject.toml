@@ -8,10 +8,14 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "jaxtyping>=0.3.11",
     "nibabel>=5.4.2",
     "numpy>=2.5.3",
     "pillow>=12.3.0",
     "portkey-ai>=2.3.4",
+    "pydantic>=2.13.5",
+    "pydantic-settings>=2.15.0",
+    "pyyaml>=6.0.3",
     "scikit-image>=0.26.0",
     "scipy>=1.18.1",
 ]
@@ -22,3 +26,8 @@ fissure-annotation = "fissure_annotation:main"
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

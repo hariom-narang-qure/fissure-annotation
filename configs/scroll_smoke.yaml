@@ -1,0 +1,8 @@
+# Two slices of one case, for checking a change in a few minutes.
+cases: work/cases.json
+only: scan2
+max_jobs: 2
+workers: 2
+agent:
+  use_tracer: false
+  max_steps: 125

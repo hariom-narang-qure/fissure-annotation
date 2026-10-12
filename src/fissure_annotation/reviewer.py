@@ -5,12 +5,14 @@ rings) plus an overview, and answers per line and per point which rule is broken
 agents, so it gives no coordinates and no corrected points. The rules live in prompts/fissure_reviewer_rules.txt so they can be edited.
 """
 import json
-import re
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image
 
-from fissure_annotation.agent import FULL, COLOURS, image, text
+from fissure_annotation.agent import FULL, image, text
+from fissure_annotation.drawing.compose import tile_row
+from fissure_annotation.drawing.lines import LINE_COLOURS
+from fissure_annotation.drawing.rings import draw_point_rings
 from fissure_annotation.variants import facts
 
 PROMPTS = Path(__file__).parents[2] / "prompts"
@@ -34,7 +36,7 @@ class Reviewer:
         self.count += 1
         content = [{"type": "input_text", "text": f"Slice {index}. Lines to review: {ids}."}]
         for i in ids:
-            content += [{"type": "input_text", "text": f"Panel for line {i} ({sl.lines[i]['name']}, {sl.lines[i]['side']} lung, {len(sl.lines[i]['mine'])} points):"},
+            content += [{"type": "input_text", "text": f"Panel for line {i} ({sl.lines[i].name}, {sl.lines[i].side} lung, {len(sl.lines[i].own_points)} points):"},
                         {"type": "input_image", "image_url": image(line_panel(sl, i))["image_url"]}]
         overview, _ = sl.render(FULL)
         sl.draw_lines(overview, FULL, ids)
@@ -50,7 +52,7 @@ class Reviewer:
 def line_panel(sl, lid: int) -> Image.Image:
     "clean | high contrast | line + numbered rings, all on a crop around the line"
     line = sl.lines[lid]
-    xs, ys = [p["x"] for p in line["mine"]], [p["y"] for p in line["mine"]]
+    xs, ys = [p.x for p in line.own_points], [p.y for p in line.own_points]
     pad_x, pad_y = max(MARGIN_FRACTION * (max(xs) - min(xs)), MARGIN_UNITS), max(MARGIN_FRACTION * (max(ys) - min(ys)), MARGIN_UNITS)
     cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
     half_x, half_y = max((max(xs) - min(xs)) / 2 + pad_x, MIN_CROP_UNITS / 2), max((max(ys) - min(ys)) / 2 + pad_y, MIN_CROP_UNITS / 2)
@@ -62,21 +64,13 @@ def line_panel(sl, lid: int) -> Image.Image:
         tiles.append(img)
     del sl.views[TEMP_VIEW]
     drawn = tiles[0].copy()
-    d = ImageDraw.Draw(drawn)
     w, h = drawn.size
-    pts = [(lx / 1000 * w, ly / 1000 * h) for lx, ly in (sl.main_to_local(p["x"], p["y"], box) for p in line["mine"])]
-    d.line(pts, fill=COLOURS[0], width=1)
-    for k, (x, y) in enumerate(pts, start=1):
-        d.ellipse([x - 5, y - 5, x + 5, y + 5], outline=(255, 0, 255), width=2)
-        d.text((x + 8, y - 15), str(k), fill=(255, 0, 255))
+    pts = [(lx / 1000 * w, ly / 1000 * h) for lx, ly in (sl.main_to_local(p.x, p.y, box) for p in line.own_points)]
+    draw_point_rings(drawn, pts, join_colour=LINE_COLOURS[0])
     tiles.append(drawn)
     scale = TILE_LONG_SIDE / max(w, h)
     tiles = [t.resize((round(w * scale), round(h * scale)), Image.LANCZOS) for t in tiles]
-    out = Image.new("RGB", (sum(t.width for t in tiles) + 8 * (len(tiles) - 1), tiles[0].height), "black")
-    x = 0
-    for t in tiles:
-        out.paste(t, (x, 0))
-        x += t.width + 8
+    out = tile_row(tiles)
     return out
 
 
