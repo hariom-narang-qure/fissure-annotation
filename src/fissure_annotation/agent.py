@@ -17,12 +17,14 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 from portkey_ai import Portkey
 
 from fissure_annotation.client import png_data_url
 from fissure_annotation.drawing.lines import draw_marked_line, draw_traced_line, line_colour
+from fissure_annotation.drawing.compose import tile_row
 from fissure_annotation.drawing.lobes import draw_lobe_boundaries
+from fissure_annotation.drawing.rings import draw_point_rings
 from fissure_annotation.drawing.ticks import draw_ticks
 from fissure_annotation.experiment import OUT, panel, proxy_scores
 from fissure_annotation.slicing import cut, load_case, lung_window
@@ -39,6 +41,7 @@ VIEW_PROPS = {
     "view_id": {"type": "string", "description": "the view whose image you are looking at: 'full' (the first image) or an id returned by zoom. Coordinates you give and receive are in this view's own 0-1000 frame."}}
 CONTRASTS = {"normal": (-600, 1500), "high": (-650, 700)}      # (centre, width) HU; 'high' stretches the -1000..-300 range where fissures live
 FULL = "full"
+CONNECT_COLOUR = (255, 255, 0)
 
 TOOLS = [
     {"type": "function", "name": "zoom",
@@ -198,17 +201,10 @@ class Slice:
             return [text("no waypoints given")], None
         clean, _ = self.render(view_id)
         marked = clean.copy()
-        d = ImageDraw.Draw(marked)
         w, h = marked.size
         pts = [(p["x"] / 1000 * w, p["y"] / 1000 * h) for p in waypoints]
-        if connect:
-            d.line(pts, fill=(255, 255, 0), width=1)
-        for k, (x, y) in enumerate(pts, start=1):
-            d.ellipse([x - 5, y - 5, x + 5, y + 5], outline=(255, 0, 255), width=2)
-            d.text((x + 8, y - 15), str(k), fill=(255, 0, 255))
-        both = Image.new("RGB", (w * 2 + 8, h), "black")
-        both.paste(clean, (0, 0))
-        both.paste(marked, (w + 8, 0))
+        draw_point_rings(marked, pts, join_colour=CONNECT_COLOUR if connect else None)
+        both = tile_row([clean, marked])
         outside = [k for k, p in enumerate(waypoints, start=1) if not (0 <= p["x"] <= 1000 and 0 <= p["y"] <= 1000)]
         note = f"view {view_id}: left = clean, right = your {len(pts)} points as numbered rings (nothing stored)" + (f"; points outside this view: {outside}" if outside else "")
         return [text(note), image(both)], both
@@ -245,9 +241,7 @@ class Slice:
         clean, legend = self.render(view_id, lobes)
         drawn = clean.copy()
         self.draw_lines(drawn, view_id, ids)
-        both = Image.new("RGB", (clean.width * 2 + 8, clean.height), "black")
-        both.paste(clean, (0, 0))
-        both.paste(drawn, (clean.width + 8, 0))
+        both = tile_row([clean, drawn])
         legend = ("thin white = your own waypoints, thick coloured = traced path" if self.use_tracer else "your lines, with circles at your points")
         return [text(f"view {view_id}: left = clean, right = lines {ids} drawn ({legend})"
                      + ("; lobe boundaries: " + "; ".join(legend) if lobes else "")), image(both)], both

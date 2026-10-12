@@ -8,10 +8,12 @@ import json
 import re
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from fissure_annotation.agent import FULL, image, text
+from fissure_annotation.drawing.compose import tile_row
 from fissure_annotation.drawing.lines import LINE_COLOURS
+from fissure_annotation.drawing.rings import draw_point_rings
 from fissure_annotation.variants import facts
 
 PROMPTS = Path(__file__).parents[2] / "prompts"
@@ -63,21 +65,13 @@ def line_panel(sl, lid: int) -> Image.Image:
         tiles.append(img)
     del sl.views[TEMP_VIEW]
     drawn = tiles[0].copy()
-    d = ImageDraw.Draw(drawn)
     w, h = drawn.size
     pts = [(lx / 1000 * w, ly / 1000 * h) for lx, ly in (sl.main_to_local(p["x"], p["y"], box) for p in line["mine"])]
-    d.line(pts, fill=LINE_COLOURS[0], width=1)
-    for k, (x, y) in enumerate(pts, start=1):
-        d.ellipse([x - 5, y - 5, x + 5, y + 5], outline=(255, 0, 255), width=2)
-        d.text((x + 8, y - 15), str(k), fill=(255, 0, 255))
+    draw_point_rings(drawn, pts, join_colour=LINE_COLOURS[0])
     tiles.append(drawn)
     scale = TILE_LONG_SIDE / max(w, h)
     tiles = [t.resize((round(w * scale), round(h * scale)), Image.LANCZOS) for t in tiles]
-    out = Image.new("RGB", (sum(t.width for t in tiles) + 8 * (len(tiles) - 1), tiles[0].height), "black")
-    x = 0
-    for t in tiles:
-        out.paste(t, (x, 0))
-        x += t.width + 8
+    out = tile_row(tiles)
     return out
 
 
