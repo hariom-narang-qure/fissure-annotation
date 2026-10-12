@@ -1,6 +1,6 @@
 import numpy as np
 
-from fissure_annotation.imaging.overlay import RED, contact_sheet, red_overlay
+from fissure_annotation.imaging.overlay import RED, contact_sheet, labelled, red_overlay
 from fissure_annotation.imaging.ticks import MARGIN_PX, crop_with_ticks, tick_positions
 
 
@@ -25,3 +25,9 @@ def test_the_overlay_marks_the_mask_in_red_and_leaves_the_rest_grey():
 def test_the_contact_sheet_pads_the_last_row():
     tiles = [np.ones((4, 5, 3), dtype=np.uint8)] * 3
     assert contact_sheet(tiles, columns=2).shape == (8, 10, 3)
+
+
+def test_a_label_draws_on_the_tile_and_keeps_the_shape():
+    tile = np.zeros((20, 60, 3), dtype=np.uint8)
+    out = labelled(tile, "z=160")
+    assert out.shape == tile.shape and out.any()
