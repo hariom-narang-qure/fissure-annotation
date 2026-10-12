@@ -239,8 +239,7 @@ def run_scroll(case, cfg: RunConfig, log_dir: Path) -> dict:
 def run_one(case, name: str, plane: str, idx: int, cfg_base: RunConfig) -> dict:
     d = OUT / name / f"{plane}_{idx}"
     tag = "AGP" if cfg_base.plain_images else ("AGR" if cfg_base.use_reviewer else ("AGS" if cfg_base.use_tracer else "AGN"))          # AGN = no tracer; AGR = no tracer plus the reviewer
-    cfg = RunConfig(plane=plane, start=idx, model=cfg_base.model, use_tracer=cfg_base.use_tracer, one_call_per_turn=cfg_base.one_call_per_turn, max_steps=cfg_base.max_steps,
-                    use_reviewer=cfg_base.use_reviewer, max_reviews=cfg_base.max_reviews, reviewer_model=cfg_base.reviewer_model, plain_images=cfg_base.plain_images)
+    cfg = cfg_base.model_copy(update={"plane": plane, "start": idx})
     try:
         r = run_scroll(case, cfg, d / ("agent_log_scroll_plain" if cfg.plain_images else "agent_log_scroll_review" if cfg.use_reviewer else ("agent_log_scroll" if cfg.use_tracer else "agent_log_scroll_notracer")))   # a fresh stack per run: lines and views are per agent
     except Exception as e:
