@@ -13,6 +13,7 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
+from fissure_annotation.frames import CropFrame
 from fissure_annotation.drawing.polylines import draw_polylines
 from fissure_annotation.slicing import LOBE_NAMES, View, boundary_pair
 
@@ -119,5 +120,4 @@ def prepare(view: View, variant: str) -> Prepared:
 
 def to_slice_pixels(wp: dict, prepared: Prepared) -> tuple[float, float]:
     "model 0-1000 coords -> (col, row) in the full isotropic slice"
-    c0, r0, c1, r1 = prepared.box
-    return c0 + wp["x"] / 1000 * (c1 - c0), r0 + wp["y"] / 1000 * (r1 - r0)
+    return CropFrame(prepared.box).to_pixels(wp["x"], wp["y"])

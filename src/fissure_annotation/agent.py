@@ -22,6 +22,7 @@ from portkey_ai import Portkey
 
 from fissure_annotation.client import png_data_url
 from fissure_annotation.drawing.lines import draw_marked_line, draw_traced_line, line_colour
+from fissure_annotation.frames import CropFrame, main_to_view, view_to_main
 from fissure_annotation.drawing.compose import tile_row
 from fissure_annotation.drawing.model_lines import draw_model_lines
 from fissure_annotation.drawing.lobes import draw_lobe_boundaries
@@ -30,7 +31,7 @@ from fissure_annotation.drawing.ticks import draw_ticks
 from fissure_annotation.experiment import OUT, panel, proxy_scores
 from fissure_annotation.slicing import cut, load_case, lung_window
 from fissure_annotation.tracing import lung_mask, ridge_map, snap
-from fissure_annotation.variants import Prepared, boundary_polylines, facts, hint_image, prepare, to_slice_pixels, upscaled
+from fissure_annotation.variants import Prepared, boundary_polylines, facts, hint_image, prepare, upscaled
 
 MODEL = "@openai/gpt-6.1-sol"
 PROMPT = (Path(__file__).parents[2] / "prompts" / "fissure_agent.txt").read_text()
@@ -108,6 +109,7 @@ class Slice:
         self.score = ridge_map(view.image, lung_mask(view.lobes)) if use_tracer else None
         self.lines: dict[int, dict] = {}
         self.plain = plain
+        self.frame = CropFrame(self.prepared.box)
         c0, r0, c1, r1 = self.prepared.box
         self.native_long_side = max(c1 - c0, r1 - r0)      # the crop's own size in slice pixels
         self.main = (Image.fromarray(view.image[r0:r1, c0:c1]).convert("RGB") if plain else self.prepared.images[0].convert("RGB"))
@@ -115,28 +117,18 @@ class Slice:
 
     # ---- frames
     def to_model(self, col: float, row: float) -> tuple[int, int]:
-        "slice pixel -> main frame"
-        c0, r0, c1, r1 = self.prepared.box
-        return round((col - c0) / (c1 - c0) * 1000), round((row - r0) / (r1 - r0) * 1000)
+        return self.frame.to_main(col, row)
 
     def to_px(self, x: float, y: float) -> tuple[float, float]:
-        "main frame -> slice pixel (col, row)"
-        return to_slice_pixels({"x": x, "y": y}, self.prepared)
+        return self.frame.to_pixels(x, y)
 
     def box(self, view_id: str) -> tuple[float, float, float, float]:
         if view_id not in self.views:
             raise KeyError(f"unknown view_id {view_id!r}; known: {sorted(self.views)}")
         return self.views[view_id]["box"]
 
-    @staticmethod
-    def local_to_main(x: float, y: float, box) -> tuple[float, float]:
-        x0, y0, x1, y1 = box
-        return x0 + x / 1000 * (x1 - x0), y0 + y / 1000 * (y1 - y0)
-
-    @staticmethod
-    def main_to_local(x: float, y: float, box) -> tuple[float, float]:
-        x0, y0, x1, y1 = box
-        return (x - x0) / (x1 - x0) * 1000, (y - y0) / (y1 - y0) * 1000
+    local_to_main = staticmethod(view_to_main)
+    main_to_local = staticmethod(main_to_view)
 
     # ---- rendering
     def render(self, view_id: str, lobes: bool = False) -> tuple[Image.Image, list[str]]:
