@@ -21,6 +21,7 @@ from PIL import Image, ImageDraw
 from portkey_ai import Portkey
 
 from fissure_annotation.client import png_data_url
+from fissure_annotation.drawing.ticks import draw_ticks
 from fissure_annotation.experiment import OUT, panel, proxy_scores
 from fissure_annotation.slicing import LOBE_NAMES, cut, load_case, lung_window
 from fissure_annotation.tracing import lung_mask, ridge_map, snap
@@ -32,7 +33,6 @@ MAX_STEPS = 12
 REASONING = {"effort": "medium"}
 COLOURS = [(255, 40, 40), (255, 220, 0), (0, 255, 120), (0, 200, 255), (255, 0, 255), (255, 140, 0)]
 ZOOM_LONG_SIDE = 900
-TICK_MARGIN = 34
 
 VIEW_PROPS = {
     "view_id": {"type": "string", "description": "the view whose image you are looking at: 'full' (the first image) or an id returned by zoom. Coordinates you give and receive are in this view's own 0-1000 frame."}}
@@ -290,19 +290,6 @@ def fixed_prepared(view, box) -> Prepared:
 
 
 COLOUR_NAMES = ["red", "green", "light blue", "magenta", "orange", "yellow", "turquoise", "violet", "pink", "lime"]
-
-
-def draw_ticks(img: Image.Image) -> None:
-    "tick marks every 100 units on all edges and labels on the left and top edges, drawn inside the image so its frame is exactly 0-1000"
-    d = ImageDraw.Draw(img)
-    w, h = img.size
-    for v in range(0, 1001, 100):
-        x, y = v / 1000 * (w - 1), v / 1000 * (h - 1)
-        for xy in ([(x, 0), (x, 8)], [(x, h - 1), (x, h - 9)], [(0, y), (8, y)], [(w - 1, y), (w - 9, y)]):
-            d.line(xy, fill=(255, 255, 0), width=1)
-        if 0 < v < 1000:
-            d.text((x + 2, 9), str(v), fill=(255, 255, 0))
-            d.text((10, y - 5), str(v), fill=(255, 255, 0))
 
 
 def initial_input(sl: Slice) -> list[dict]:
