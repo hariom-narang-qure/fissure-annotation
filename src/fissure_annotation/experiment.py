@@ -1,67 +1,70 @@
-"""Run variants A-E of the one-shot prompts with one model over a set of slices; save json, raw reply and a review panel each.
+"""Run the waypoint agent over a range of slices of one scan, and write a contact sheet of the results.
 
-The proxy score is in `evaluation.proxy_scores`, and it is not accuracy.
+- Each slice is an independent conversation, run in parallel, one thread per slice.
+- Everything that distinguishes one run from another (scan, slices, model) is in the YAML config.
+- Output goes under `out_dir`: points/, masks/, overlays/, logs/ and contact_sheet.png (see waypoints.RunFolder).
 """
-import json
+import os
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
-from fissure_annotation.cases import CasesSettings, case_files, read_picks
-from fissure_annotation.client import ask, parse_json
-from fissure_annotation.config import EXPERIMENT_OUT as OUT, MODEL
-from fissure_annotation.lines import ProposedFissure
-from fissure_annotation.picker import pick_slices
-from fissure_annotation.slicing import cut, load_case
-from fissure_annotation.drawing.model_lines import draw_model_lines
-from fissure_annotation.evaluation.proxy_scores import proxy_scores
-from fissure_annotation.evaluation.review_panel import panel
-from fissure_annotation.variants import boundary_polylines, hint_image, prepare
+import numpy as np
+from jaxtyping import UInt8
+from portkey_ai import Portkey
 
+from fissure_annotation.agent import AgentSettings, SliceLog, run_slice
+from fissure_annotation.imaging.overlay import contact_sheet, labelled, red_overlay
+from fissure_annotation.imaging.png import read_gray, save_png
+from fissure_annotation.imaging.slices import slice_file_name, write_slices
+from fissure_annotation.settings import ExperimentSettings
+from fissure_annotation.waypoints import RunFolder
 
-def run_variant(case: str, plane: str, idx: int, view, variant: str, model: str) -> dict:
-    d = OUT / case / f"{plane}_{idx}"
-    d.mkdir(parents=True, exist_ok=True)
-    prepared = prepare(view, variant)
-    for attempt in range(2):
-        try:
-            reply = ask(prepared.images, prepared.prompt, model=model)
-            raw_fissures = parse_json(reply)["fissures"]
-            fissures = [ProposedFissure.model_validate(f) for f in raw_fissures]
-            break
-        except Exception as e:
-            err = str(e)[:200]
-    else:
-        return {"case": case, "plane": plane, "index": idx, "variant": variant, "error": err}
-    (d / f"{variant}.raw.txt").write_text(reply)
-    (d / f"{variant}.json").write_text(json.dumps(raw_fissures, indent=2))
-    overlay = draw_model_lines(prepared.images[0], fissures)
-    polys = boundary_polylines(view, prepared.box, prepared.scale)
-    hint = hint_image(view, prepared.box, polys, prepared.scale)
-    panel(prepared, hint, overlay).save(d / f"{variant}.panel.png")
-    return {"case": case, "plane": plane, "index": idx, "variant": variant, "n_fissures": len(fissures),
-            **proxy_scores(view, fissures, prepared)}
+CONTACT_SHEET_COLUMNS = 3
 
 
-class OneShotConfig(CasesSettings):
-    variants: str = "E"
-    """Which prompt variants to run, as letters, for example ABCDE."""
-    model: str = MODEL
-    workers: int = 8
+class WaypointExperiment(ExperimentSettings):
+    slices_dir: Path
+    out_dir: Path
+    first_slice: int
+    last_slice: int
+    agent: AgentSettings = AgentSettings()
+
+    @property
+    def slice_indices(self) -> list[int]:
+        return list(range(self.first_slice, self.last_slice + 1))
 
 
-def jobs_for(config: OneShotConfig) -> list[tuple]:
-    jobs = []
-    for name, (scan, lobe_dir) in case_files(config).items():
-        case = load_case(scan, lobe_dir)
-        picks_file = OUT / name / "picks.json"
-        picks_file.parent.mkdir(parents=True, exist_ok=True)
-        picks = read_picks(name) if picks_file.exists() else pick_slices(case)
-        picks_file.write_text(json.dumps(picks))
-        jobs += [(name, plane, idx, cut(case, plane, idx), variant) for plane, idx in picks for variant in config.variants]
-    return jobs[: config.max_jobs]
+class SliceExport(ExperimentSettings):
+    nifti: Path
+    out_dir: Path
 
 
-def run_one_shot_experiment(config: OneShotConfig) -> list[dict]:
-    with ThreadPoolExecutor(config.workers) as ex:
-        results = list(ex.map(lambda j: run_variant(*j[:3], j[3], j[4], config.model), jobs_for(config)))
-    (OUT / f"results_{config.variants}_{config.model.split('/')[-1]}.json").write_text(json.dumps(results, indent=1))
-    return results
+def export_slices(config: SliceExport) -> int:
+    return write_slices(config.nifti, config.out_dir)
+
+
+def portkey_client() -> Portkey:
+    return Portkey(api_key=os.environ["PORTKEY_API_KEY"])
+
+
+def run_experiment(config: WaypointExperiment, client) -> list[SliceLog]:
+    folder = RunFolder(root=config.out_dir)
+    with ThreadPoolExecutor(len(config.slice_indices)) as pool:
+        logs = list(pool.map(lambda z: run_slice(client, config.agent, folder, config.slices_dir, z), config.slice_indices))
+    save_png(sheet_of_results(config, folder), config.out_dir / "contact_sheet.png")
+    return logs
+
+
+def result_tile(config: WaypointExperiment, folder: RunFolder, slice_index: int) -> UInt8[np.ndarray, "h w 3"]:
+    "the traced slice, or the plain slice when the model traced nothing, cropped to the lungs"
+    slice_png = config.slices_dir / slice_file_name(slice_index)
+    image = read_gray(slice_png)
+    mask_path = folder.mask_path(slice_png)
+    tile = red_overlay(image, read_gray(mask_path) > 0) if mask_path.exists() else np.stack([image] * 3, axis=-1)
+    x0, y0, x1, y1 = config.agent.overlay_box
+    return labelled(np.ascontiguousarray(tile[y0:y1, x0:x1]), f"z={slice_index}")
+
+
+def sheet_of_results(config: WaypointExperiment, folder: RunFolder) -> UInt8[np.ndarray, "h w 3"]:
+    tiles = [result_tile(config, folder, z) for z in config.slice_indices]
+    return contact_sheet(tiles, CONTACT_SHEET_COLUMNS)

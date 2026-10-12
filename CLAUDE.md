@@ -35,8 +35,9 @@ These apply to code, docs, READMEs, PRs and commits.
 - Extension points are small interfaces, not flags.
   - A new agent variant is a new tool set, prompt and result mapper.
   - Do not thread boolean flags through the pipeline.
-- Layers depend downward only: geometry, preparation, tracing, tools, conversation, agents, evaluation.
-  - Agents must not import from evaluation helpers that import agents.
+- Layers depend downward only: imaging, waypoint storage, tools, conversation, experiments.
+  - `imaging/` is the bottom layer: it handles pixels and nothing else, and imports nothing from the rest of the package.
+  - A test in `tests/test_layering.py` enforces it.
 - Tests live in `tests/`. A behaviour-preserving refactor needs a test that pins the behaviour first.
 
 # Salvo / Lucid

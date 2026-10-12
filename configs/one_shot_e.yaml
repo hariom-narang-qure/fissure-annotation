@@ -1,4 +1,0 @@
-# The one-shot baseline: variant E (lobe-boundary image plus mistake rules).
-# Letters A to E select the prompt variants of variants.py, for example ABCDE.
-cases: work/cases.json
-variants: E

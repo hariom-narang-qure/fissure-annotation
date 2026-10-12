@@ -1,6 +1,0 @@
-# Rounds 8 to 13 setup: no tracer, check_points, finish-the-ends prompt, view-aware look.
-# Round 12 and 13 used 125 turns, since 24 cut some runs off.
-cases: work/cases.json
-agent:
-  use_tracer: false
-  max_steps: 125
