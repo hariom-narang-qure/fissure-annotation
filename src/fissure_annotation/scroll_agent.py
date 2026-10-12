@@ -17,21 +17,14 @@ from portkey_ai import Portkey
 from fissure_annotation.agent import FULL, Slice, converse, image, text
 from fissure_annotation.config import RunConfig
 from fissure_annotation.lines import Fissure
+from fissure_annotation.prompts import ScrollPromptFacts, scroll_instructions
 from fissure_annotation.reviewer import Reviewer
 from fissure_annotation.slicing import cut
 from fissure_annotation.tools.toolsets import scroll_tools
 from fissure_annotation.variants import boundary_polylines, facts, hint_image, lung_box
 
-PROMPTS = {True: (Path(__file__).parents[2] / "prompts" / "fissure_scroll_agent.txt").read_text(),
-           False: (Path(__file__).parents[2] / "prompts" / "fissure_scroll_agent_notracer.txt").read_text()}   # keyed by AgentConfig.use_tracer
 AXIS = {"coronal": 1, "axial": 2}
 BOX_STRIDE_MM = 8
-PLAIN_PROMPT_EDITS = [("; tick marks and labels are drawn inside the edges of zoomed images every 100 units", "; the images have no tick marks or labels, so place points by eye as a fraction of the image width and height (the centre is 500, 500)"),
-                      (" clean, with tick marks, in the view", " clean, in the view")]
-
-
-REVIEW_PARAGRAPH = ("\n\nReview (optional): `overlay(..., review: true)` also asks a separate, independent reviewer to check your lines against a rule list (ends, no interpolation, points on the line, smooth path, no duplicates, right structure, naming, missed fissures) and to tell you which lines, and which numbered points of them, look problematic and why, in words only (no coordinates). "
-                    "Use it once when your lines for the slice are drawn, before you submit; you have at most {max_reviews} reviews per run. The reviewer can be wrong: verify each finding by zooming on that spot before you change anything, and keep a line you can see is right.")
 
 
 class Stack:
@@ -145,14 +138,7 @@ def run_scroll(case, cfg: RunConfig, log_dir: Path) -> dict:
     if not stack.lo <= cfg.start <= stack.hi:
         raise ValueError(f"start slice {cfg.start} outside the lung range {stack.lo}-{stack.hi}")
     top = facts(stack.get(cfg.start).view)["top"]
-    template = PROMPTS[cfg.use_tracer]
-    if cfg.plain_images:
-        for old, new in PLAIN_PROMPT_EDITS:
-            assert old in template, old
-            template = template.replace(old, new)
-    if cfg.use_reviewer:
-        template = template.replace("\n\nSuggested way to work", REVIEW_PARAGRAPH + "\n\nSuggested way to work", 1)
-    instructions = template.format(max_reviews=cfg.max_reviews, start=cfg.start, plane=cfg.plane, top=top, lo=stack.lo, hi=stack.hi, mm_step=stack.mm_step, five_mm=max(round(5 / stack.mm_step), 1))
+    instructions = scroll_instructions(cfg, ScrollPromptFacts(start=cfg.start, plane=cfg.plane, top=top, lo=stack.lo, hi=stack.hi, mm_step=stack.mm_step))
     kw = dict(model=cfg.model, instructions=instructions, tools=scroll_tools(cfg.use_tracer, cfg.use_reviewer, cfg.plain_images),      # includes submit (it is part of TOOLS)
               reasoning=cfg.reasoning, max_output_tokens=cfg.max_output_tokens)
     finished, transcript, usage, steps = converse(client, kw, initial_input(stack, cfg.start),
