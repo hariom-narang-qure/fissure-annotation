@@ -20,6 +20,7 @@ from fissure_annotation.settings import ExperimentSettings
 from fissure_annotation.waypoints import RunFolder
 
 CONTACT_SHEET_COLUMNS = 3
+SIDE_BY_SIDE_COLUMNS = 2
 
 
 class WaypointExperiment(ExperimentSettings):
@@ -51,8 +52,25 @@ def run_experiment(config: WaypointExperiment, client) -> list[SliceLog]:
     folder = RunFolder(root=config.out_dir)
     with ThreadPoolExecutor(len(config.slice_indices)) as pool:
         logs = list(pool.map(lambda z: run_slice(client, config.agent, folder, config.slices_dir, z), config.slice_indices))
-    save_png(sheet_of_results(config, folder), config.out_dir / "contact_sheet.png")
+    write_sheets(config)
     return logs
+
+
+def write_sheets(config: WaypointExperiment) -> None:
+    "both sheets are built from the files of a finished run, so they can be remade without calling the model"
+    folder = RunFolder(root=config.out_dir)
+    save_png(sheet_of_results(config, folder), config.out_dir / "contact_sheet.png")
+    save_png(side_by_side_sheet(config, folder), config.out_dir / "side_by_side.png")
+
+
+def crop_to_lungs(config: WaypointExperiment, tile: UInt8[np.ndarray, "h w c"]) -> UInt8[np.ndarray, "h w c"]:
+    x0, y0, x1, y1 = config.agent.overlay_box
+    return np.ascontiguousarray(tile[y0:y1, x0:x1])
+
+
+def original_tile(config: WaypointExperiment, slice_index: int) -> UInt8[np.ndarray, "h w 3"]:
+    image = read_gray(config.slices_dir / slice_file_name(slice_index))
+    return labelled(crop_to_lungs(config, np.stack([image] * 3, axis=-1)), f"z={slice_index} original")
 
 
 def result_tile(config: WaypointExperiment, folder: RunFolder, slice_index: int) -> UInt8[np.ndarray, "h w 3"]:
@@ -61,10 +79,15 @@ def result_tile(config: WaypointExperiment, folder: RunFolder, slice_index: int)
     image = read_gray(slice_png)
     mask_path = folder.mask_path(slice_png)
     tile = red_overlay(image, read_gray(mask_path) > 0) if mask_path.exists() else np.stack([image] * 3, axis=-1)
-    x0, y0, x1, y1 = config.agent.overlay_box
-    return labelled(np.ascontiguousarray(tile[y0:y1, x0:x1]), f"z={slice_index}")
+    return labelled(crop_to_lungs(config, tile), f"z={slice_index}")
 
 
 def sheet_of_results(config: WaypointExperiment, folder: RunFolder) -> UInt8[np.ndarray, "h w 3"]:
     tiles = [result_tile(config, folder, z) for z in config.slice_indices]
     return contact_sheet(tiles, CONTACT_SHEET_COLUMNS)
+
+
+def side_by_side_sheet(config: WaypointExperiment, folder: RunFolder) -> UInt8[np.ndarray, "h w 3"]:
+    "each tile is the original slice next to its annotated slice"
+    pairs = [np.hstack([original_tile(config, z), result_tile(config, folder, z)]) for z in config.slice_indices]
+    return contact_sheet(pairs, SIDE_BY_SIDE_COLUMNS)
