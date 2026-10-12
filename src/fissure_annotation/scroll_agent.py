@@ -100,7 +100,7 @@ class Stack:
             img, legend = sl.render(view_id, args.get("lobes", False))
             content = [text(f"slice {index}, view {view_id} ({sl.tick_note()}; the same region on every slice)" + ("; lobe boundaries: " + "; ".join(legend) if legend else "")), image(img)]
         else:
-            tools = {"overlay": sl.overlay_tool, "zoom": sl.zoom_tool, "check_points": sl.check_points_tool, **({"snap": sl.snap_tool} if self.use_tracer else {"mark": sl.mark_tool})}
+            tools = sl.tool_methods()
             if name not in tools:
                 return [text(f"unknown tool {name!r}; available: {sorted(tools) + ['look', 'submit']}")]
             content, img = tools[name](**args)

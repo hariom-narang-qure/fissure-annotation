@@ -9,6 +9,7 @@ Chat completions refuses function tools while reasoning is on for gpt-6.1-sol, s
 previous_response_id (the server keeps the conversation, including the model's reasoning, between turns).
 """
 import base64
+from collections.abc import Callable
 import io
 import json
 import os
@@ -211,6 +212,11 @@ class Slice:
         return [text(f"view {view_id}: left = clean, right = lines {ids} drawn ({legend})"
                      + ("; lobe boundaries: " + "; ".join(legend) if lobes else "")), image(both)], both
 
+    def tool_methods(self) -> dict[str, Callable]:
+        "the name the model calls -> the method that runs it. `look` and `submit` are handled by the caller, not the slice"
+        return {"zoom": self.zoom_tool, "overlay": self.overlay_tool, "check_points": self.check_points_tool,
+                **({"snap": self.snap_tool} if self.use_tracer else {"mark": self.mark_tool})}
+
     def tick_note(self) -> str:
         return "no tick marks: place points by eye as a fraction of the image width and height" if self.plain else "ticks drawn inside the edges"
 
@@ -253,7 +259,7 @@ def initial_input(sl: Slice) -> list[dict]:
 
 def run_tool(sl: Slice, call, log_dir: Path, step: int):
     args = json.loads(call.arguments)
-    tools = {"snap": sl.snap_tool, "overlay": sl.overlay_tool, "zoom": sl.zoom_tool}
+    tools = sl.tool_methods()
     if call.name not in tools:
         return [text(f"unknown tool {call.name}")], None
     content, img = tools[call.name](**args)

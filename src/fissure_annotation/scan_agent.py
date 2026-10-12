@@ -135,7 +135,7 @@ def run_scan(case_name: str, case, model: str, log_dir: Path) -> dict:
             content = sess.open_slice(**args)
         else:
             sl = sess.current_slice()
-            content, img = {"snap": sl.snap_tool, "overlay": sl.overlay_tool, "zoom": sl.zoom_tool}[call.name](**args)
+            content, img = sl.tool_methods()[call.name](**args)
             if img is not None:
                 img.save(log_dir / f"step{step:02d}_{call.name}_{call.call_id[-6:]}.png")
         return content
