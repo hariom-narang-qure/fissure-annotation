@@ -21,6 +21,7 @@ from PIL import Image, ImageDraw
 from portkey_ai import Portkey
 
 from fissure_annotation.client import png_data_url
+from fissure_annotation.drawing.lines import draw_marked_line, draw_traced_line, line_colour
 from fissure_annotation.drawing.lobes import draw_lobe_boundaries
 from fissure_annotation.drawing.ticks import draw_ticks
 from fissure_annotation.experiment import OUT, panel, proxy_scores
@@ -32,7 +33,6 @@ MODEL = "@openai/gpt-6.1-sol"
 PROMPT = (Path(__file__).parents[2] / "prompts" / "fissure_agent.txt").read_text()
 MAX_STEPS = 12
 REASONING = {"effort": "medium"}
-COLOURS = [(255, 40, 40), (255, 220, 0), (0, 255, 120), (0, 200, 255), (255, 0, 255), (255, 140, 0)]
 ZOOM_LONG_SIDE = 900
 
 VIEW_PROPS = {
@@ -153,23 +153,21 @@ class Slice:
 
     def draw_lines(self, img: Image.Image, view_id: str, ids: list[int]) -> None:
         box = self.box(view_id)
-        d = ImageDraw.Draw(img)
         w, h = img.size
-        to_img = lambda x, y: (lambda lx, ly: (lx / 1000 * w, ly / 1000 * h))(*self.main_to_local(x, y, box))
+
+        def to_img(x: float, y: float) -> tuple[float, float]:
+            lx, ly = self.main_to_local(x, y, box)
+            return lx / 1000 * w, ly / 1000 * h
+
         for k, i in enumerate(ids):
-            col = COLOURS[k % len(COLOURS)]
             line = self.lines[i]
             own = [to_img(p["x"], p["y"]) for p in line["mine"]]
-            if line["path"] is None:             # no tracer: the model's own line, with its points marked
-                d.line(own, fill=col, width=2)
-                for x, y in own:
-                    d.ellipse([x - 3, y - 3, x + 3, y + 3], outline=col)
-                xy = own
+            label = f"{i} {line['side'][0].upper()}"
+            if line["path"] is None:
+                draw_marked_line(img, own, line_colour(k), label)
             else:
-                d.line(own, fill=(255, 255, 255), width=1)
-                xy = [to_img(*self.to_model(c, r)) for r, c in line["path"]]
-                d.line(xy, fill=col, width=2)
-            d.text((xy[0][0] + 5, xy[0][1] - 14), f"{i} {line['side'][0].upper()}", fill=col)
+                traced = [to_img(*self.to_model(c, r)) for r, c in line["path"]]
+                draw_traced_line(img, own, traced, line_colour(k), label)
 
     # ---- tools: each returns (content, image or None)
     def zoom_tool(self, x0, y0, x1, y1, view_id=FULL, contrast="normal", lobes=False):

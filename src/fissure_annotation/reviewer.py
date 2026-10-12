@@ -10,7 +10,8 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from fissure_annotation.agent import FULL, COLOURS, image, text
+from fissure_annotation.agent import FULL, image, text
+from fissure_annotation.drawing.lines import LINE_COLOURS
 from fissure_annotation.variants import facts
 
 PROMPTS = Path(__file__).parents[2] / "prompts"
@@ -65,7 +66,7 @@ def line_panel(sl, lid: int) -> Image.Image:
     d = ImageDraw.Draw(drawn)
     w, h = drawn.size
     pts = [(lx / 1000 * w, ly / 1000 * h) for lx, ly in (sl.main_to_local(p["x"], p["y"], box) for p in line["mine"])]
-    d.line(pts, fill=COLOURS[0], width=1)
+    d.line(pts, fill=LINE_COLOURS[0], width=1)
     for k, (x, y) in enumerate(pts, start=1):
         d.ellipse([x - 5, y - 5, x + 5, y + 5], outline=(255, 0, 255), width=2)
         d.text((x + 8, y - 15), str(k), fill=(255, 0, 255))
