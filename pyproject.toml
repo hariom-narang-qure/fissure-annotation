@@ -8,10 +8,12 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "jaxtyping>=0.3.11",
     "nibabel>=5.4.2",
     "numpy>=2.5.3",
     "pillow>=12.3.0",
     "portkey-ai>=2.3.4",
+    "pydantic>=2.13.5",
     "scikit-image>=0.26.0",
     "scipy>=1.18.1",
 ]

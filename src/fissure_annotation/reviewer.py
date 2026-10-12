@@ -37,7 +37,7 @@ class Reviewer:
         self.count += 1
         content = [{"type": "input_text", "text": f"Slice {index}. Lines to review: {ids}."}]
         for i in ids:
-            content += [{"type": "input_text", "text": f"Panel for line {i} ({sl.lines[i]['name']}, {sl.lines[i]['side']} lung, {len(sl.lines[i]['mine'])} points):"},
+            content += [{"type": "input_text", "text": f"Panel for line {i} ({sl.lines[i].name}, {sl.lines[i].side} lung, {len(sl.lines[i].own_points)} points):"},
                         {"type": "input_image", "image_url": image(line_panel(sl, i))["image_url"]}]
         overview, _ = sl.render(FULL)
         sl.draw_lines(overview, FULL, ids)
@@ -53,7 +53,7 @@ class Reviewer:
 def line_panel(sl, lid: int) -> Image.Image:
     "clean | high contrast | line + numbered rings, all on a crop around the line"
     line = sl.lines[lid]
-    xs, ys = [p["x"] for p in line["mine"]], [p["y"] for p in line["mine"]]
+    xs, ys = [p.x for p in line.own_points], [p.y for p in line.own_points]
     pad_x, pad_y = max(MARGIN_FRACTION * (max(xs) - min(xs)), MARGIN_UNITS), max(MARGIN_FRACTION * (max(ys) - min(ys)), MARGIN_UNITS)
     cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
     half_x, half_y = max((max(xs) - min(xs)) / 2 + pad_x, MIN_CROP_UNITS / 2), max((max(ys) - min(ys)) / 2 + pad_y, MIN_CROP_UNITS / 2)
@@ -66,7 +66,7 @@ def line_panel(sl, lid: int) -> Image.Image:
     del sl.views[TEMP_VIEW]
     drawn = tiles[0].copy()
     w, h = drawn.size
-    pts = [(lx / 1000 * w, ly / 1000 * h) for lx, ly in (sl.main_to_local(p["x"], p["y"], box) for p in line["mine"])]
+    pts = [(lx / 1000 * w, ly / 1000 * h) for lx, ly in (sl.main_to_local(p.x, p.y, box) for p in line.own_points)]
     draw_point_rings(drawn, pts, join_colour=LINE_COLOURS[0])
     tiles.append(drawn)
     scale = TILE_LONG_SIDE / max(w, h)

@@ -22,6 +22,7 @@ from portkey_ai import Portkey
 
 from fissure_annotation.client import png_data_url
 from fissure_annotation.drawing.lines import draw_marked_line, draw_traced_line, line_colour
+from fissure_annotation.lines import CONFIDENCE_OF_STATUS, Fissure, Line, MainPoint, SubmittedLine, Waypoint
 from fissure_annotation.frames import CropFrame, main_to_view, view_to_main
 from fissure_annotation.drawing.compose import tile_row
 from fissure_annotation.drawing.model_lines import draw_model_lines
@@ -107,7 +108,7 @@ class Slice:
         self.next_id = None            # a stack sets this so line ids are unique across slices
         self.use_tracer = use_tracer
         self.score = ridge_map(view.image, lung_mask(view.lobes)) if use_tracer else None
-        self.lines: dict[int, dict] = {}
+        self.lines: dict[int, Line] = {}
         self.plain = plain
         self.frame = CropFrame(self.prepared.box)
         c0, r0, c1, r1 = self.prepared.box
@@ -157,12 +158,12 @@ class Slice:
 
         for k, i in enumerate(ids):
             line = self.lines[i]
-            own = [to_img(p["x"], p["y"]) for p in line["mine"]]
-            label = f"{i} {line['side'][0].upper()}"
-            if line["path"] is None:
+            own = [to_img(p.x, p.y) for p in line.own_points]
+            label = f"{i} {line.side[0].upper()}"
+            if not line.is_traced:
                 draw_marked_line(img, own, line_colour(k), label)
             else:
-                traced = [to_img(*self.to_model(c, r)) for r, c in line["path"]]
+                traced = [to_img(*self.to_model(c, r)) for r, c in line.traced_path]
                 draw_traced_line(img, own, traced, line_colour(k), label)
 
     # ---- tools: each returns (content, image or None)
@@ -207,7 +208,7 @@ class Slice:
         box = self.box(view_id)
         main_pts = [self.local_to_main(w["x"], w["y"], box) for w in waypoints]
         lid, note = self.line_id_for(line_id)
-        self.lines[lid] = {"name": name, "side": side, "path": None, "stats": {}, "mine": [{"x": round(x, 1), "y": round(y, 1)} for x, y in main_pts]}
+        self.lines[lid] = Line(name=name, side=side, own_points=own_points(main_pts))
         img, _ = self.render(view_id)
         self.draw_lines(img, view_id, [lid])
         local = [self.main_to_local(x, y, box) for x, y in main_pts]
@@ -219,8 +220,7 @@ class Slice:
         rc = [(self.to_px(x, y)[1], self.to_px(x, y)[0]) for x, y in main_pts]
         s = snap(self.score, rc, self.view.mm_per_px)
         lid, note = self.line_id_for(line_id)
-        self.lines[lid] = {"name": name, "side": side, "path": s.path, "stats": s.stats,
-                           "mine": [{"x": round(x, 1), "y": round(y, 1)} for x, y in main_pts]}
+        self.lines[lid] = Line(name=name, side=side, own_points=own_points(main_pts), traced_path=s.path, fit=s.stats)
         local = [self.main_to_local(*self.to_model(c, r), box) for r, c in thin(s.path, 8)]
         outside = any(not (0 <= x <= 1000 and 0 <= y <= 1000) for x, y in local)
         img, _ = self.render(view_id)
@@ -242,18 +242,26 @@ class Slice:
     def tick_note(self) -> str:
         return "no tick marks: place points by eye as a fraction of the image width and height" if self.plain else "ticks drawn inside the edges"
 
-    def final_fissures(self, submitted):
+    def final_fissures(self, submitted: list[dict]) -> list[dict]:
         out = []
-        for s in submitted:
-            line = self.lines.get(s["line_id"])
-            if line is None or s["status"] == "dropped":
+        for raw in submitted:
+            verdict = SubmittedLine.model_validate(raw)
+            line = self.lines.get(verdict.line_id)
+            if line is None or verdict.status == "dropped":
                 continue
-            geometry = s.get("geometry", "mine") if line["path"] is not None else "mine"
-            waypoints = ([{"x": round(p["x"]), "y": round(p["y"])} for p in line["mine"]] if geometry == "mine"
-                         else [dict(zip("xy", self.to_model(c, r))) for r, c in thin(line["path"], 12)])
-            out.append({"name": line["name"], "side": line["side"], "confidence": {"confirmed": "clear", "uncertain": "faint"}[s["status"]],
-                        "waypoints": waypoints, "evidence": s["evidence"], "geometry": geometry, "fit": line["stats"]})
+            geometry = verdict.geometry if line.is_traced else "mine"
+            out.append(Fissure(name=line.name, side=line.side, confidence=CONFIDENCE_OF_STATUS[verdict.status], waypoints=self.waypoints_for(line, geometry),
+                               evidence=verdict.evidence, geometry=geometry, fit=line.fit).model_dump())
         return out
+
+    def waypoints_for(self, line: Line, geometry: str) -> list[Waypoint]:
+        if geometry == "mine":
+            return [Waypoint(x=round(p.x), y=round(p.y)) for p in line.own_points]
+        return [Waypoint(x=x, y=y) for x, y in (self.to_model(c, r) for r, c in thin(line.traced_path, 12))]
+
+
+def own_points(main_points: list[tuple[float, float]]) -> list[MainPoint]:
+    return [MainPoint(x=round(x, 1), y=round(y, 1)) for x, y in main_points]
 
 
 def fixed_prepared(view, box) -> Prepared:
