@@ -1,0 +1,6 @@
+# Round 13: plain PNGs, no ticks, native size.
+cases: work/cases.json
+agent:
+  use_tracer: false
+  plain_images: true
+  max_steps: 125

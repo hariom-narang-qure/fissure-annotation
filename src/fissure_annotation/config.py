@@ -17,9 +17,9 @@ class Section(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class RunConfig(Section):
-    plane: Plane
-    start: int = Field(description="the slice whose lines are delivered")
+class AgentConfig(Section):
+    "what distinguishes one agent setup from another, independent of which slice it runs on"
+
     model: str = MODEL
     max_steps: int = 24
     max_output_tokens: int = 24000
@@ -34,3 +34,10 @@ class RunConfig(Section):
     @property
     def reasoning(self) -> dict:
         return {"effort": self.reasoning_effort}
+
+
+class RunConfig(AgentConfig):
+    "one agent run: an agent setup on one slice"
+
+    plane: Plane
+    start: int = Field(description="the slice whose lines are delivered")

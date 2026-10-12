@@ -1,0 +1,6 @@
+# Round 11: overlay(review=true) asks a separate reviewer agent.
+cases: work/cases.json
+agent:
+  use_tracer: false
+  use_reviewer: true
+  max_reviews: 2

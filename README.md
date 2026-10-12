@@ -10,6 +10,9 @@ Run everything with `uv run --env-file <env file with PORTKEY_API_KEY> ...` (see
 - `variants.py`, `experiment.py`: one-shot prompt variants A-E (facts, crop, lobe hints, mistake rules) and the blinded-review panels.
 - `tracing.py`: `snap`, the ridge tracer (adapted from the exploratory reference code).
 - `agent.py`: tool-using slice agent (zoom views, snap, overlay, submit) on the OpenAI Responses API.
+- `scroll_agent.py`: the scrolling slice agent (`Stack`, `run_scroll`). `scroll_experiment.py` runs it over the picked slices of a set of scans.
+- `config.py`, `settings.py`: `AgentConfig` / `RunConfig`, and the YAML-plus-flags loader.
+- `configs/`: one YAML per experiment. `scripts/`: thin entry points.
 - `scan_agent.py`: per-scan agent that opens slices, traces, and reports presence for each fissure.
 - `review_pack.py`: run the slice agent on a few slices of one scan and write one side-by-side image per slice.
 - `prompts/`: the prompts sent to the model.
@@ -17,6 +20,8 @@ Run everything with `uv run --env-file <env file with PORTKEY_API_KEY> ...` (see
 ## Examples
 
     uv run --env-file .env python -m fissure_annotation.review_pack <scan.nii.gz> <lobe_mask_dir> review/out
+    uv run --env-file .env python scripts/run_scroll.py --config configs/scroll_current.yaml
+    uv run --env-file .env python scripts/run_scroll.py --config configs/scroll_smoke.yaml     # two slices, for a quick check
     uv run --env-file .env python -m fissure_annotation.scan_agent work/cases.json
     uv run --env-file .env python -m fissure_annotation.experiment work/cases.json E
 

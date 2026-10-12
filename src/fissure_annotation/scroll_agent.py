@@ -9,8 +9,6 @@ or without the lines drawn on it.
 import copy
 import json
 import os
-import sys
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -18,17 +16,13 @@ from PIL import Image
 from portkey_ai import Portkey
 
 from fissure_annotation.agent import FULL, TOOLS, Slice, converse, image, text
-from fissure_annotation.config import MODEL, RunConfig
+from fissure_annotation.config import RunConfig
 from fissure_annotation.reviewer import Reviewer
-from fissure_annotation.drawing.model_lines import draw_model_lines
-from fissure_annotation.config import EXPERIMENT_OUT as OUT
-from fissure_annotation.evaluation.proxy_scores import proxy_scores
-from fissure_annotation.evaluation.review_panel import panel
-from fissure_annotation.slicing import cut, load_case
+from fissure_annotation.slicing import cut
 from fissure_annotation.variants import boundary_polylines, facts, hint_image, lung_box
 
 PROMPTS = {True: (Path(__file__).parents[2] / "prompts" / "fissure_scroll_agent.txt").read_text(),
-           False: (Path(__file__).parents[2] / "prompts" / "fissure_scroll_agent_notracer.txt").read_text()}   # keyed by RunConfig.use_tracer
+           False: (Path(__file__).parents[2] / "prompts" / "fissure_scroll_agent_notracer.txt").read_text()}   # keyed by AgentConfig.use_tracer
 AXIS = {"coronal": 1, "axial": 2}
 BOX_STRIDE_MM = 8
 SCROLL_PROPS = {
@@ -234,48 +228,3 @@ def run_scroll(case, cfg: RunConfig, log_dir: Path) -> dict:
     visited = sorted({c["args"].get("slice") for s in transcript for c in s["calls"] if c["args"].get("slice") is not None})
     return {"fissures": by_slice.get(start, []), "extra": {k: v for k, v in by_slice.items() if k != start}, "steps": steps, "usage": usage,
             "visited": visited, "stack": stack, "start": start, "submitted_explicitly": finished is not None}
-
-
-def run_one(case, name: str, plane: str, idx: int, cfg_base: RunConfig) -> dict:
-    d = OUT / name / f"{plane}_{idx}"
-    tag = "AGP" if cfg_base.plain_images else ("AGR" if cfg_base.use_reviewer else ("AGS" if cfg_base.use_tracer else "AGN"))          # AGN = no tracer; AGR = no tracer plus the reviewer
-    cfg = cfg_base.model_copy(update={"plane": plane, "start": idx})
-    try:
-        r = run_scroll(case, cfg, d / ("agent_log_scroll_plain" if cfg.plain_images else "agent_log_scroll_review" if cfg.use_reviewer else ("agent_log_scroll" if cfg.use_tracer else "agent_log_scroll_notracer")))   # a fresh stack per run: lines and views are per agent
-    except Exception as e:
-        return {"case": name, "plane": plane, "index": idx, "variant": tag, "error": str(e)[:300]}
-    sl = r["stack"].get(idx)
-    (d / f"{tag}.json").write_text(json.dumps(r["fissures"], indent=2))
-    (d / f"{tag}_extra.json").write_text(json.dumps({str(k): v for k, v in r["extra"].items()}, indent=2))
-    polys = boundary_polylines(sl.view, sl.prepared.box, sl.prepared.scale)
-    panel(sl.prepared, hint_image(sl.view, sl.prepared.box, polys, sl.prepared.scale), draw_model_lines(sl.prepared.images[0], r["fissures"])).save(d / f"{tag}.panel.png")
-    return {"case": name, "plane": plane, "index": idx, "variant": tag, "n_fissures": len(r["fissures"]), "steps": r["steps"], "tokens": r["usage"],
-            "visited": r["visited"], "extra_slices_with_lines": sorted(r["extra"]), **proxy_scores(sl.view, r["fissures"], sl.prepared)}
-
-
-def main():
-    "scroll_agent <cases.json> [model] [only_case_substring] [--no-tracer] [--max-steps N] [--review] [--plain]"
-    max_steps = int(sys.argv[sys.argv.index("--max-steps") + 1]) if "--max-steps" in sys.argv else RunConfig(plane="coronal", start=0).max_steps
-    args = [a for a in sys.argv[1:] if a not in ("--no-tracer", "--max-steps", "--review", "--plain") and a != str(max_steps)]
-    use_reviewer = "--review" in sys.argv
-    plain = "--plain" in sys.argv
-    use_tracer = "--no-tracer" not in sys.argv
-    cases = json.load(open(args[0]))
-    model = args[1] if len(args) > 1 else MODEL
-    only = args[2] if len(args) > 2 else ""
-    cfg_base = RunConfig(plane="coronal", start=0, model=model, use_tracer=use_tracer, max_steps=max_steps, use_reviewer=use_reviewer, plain_images=plain)      # plane and start are filled in per job
-    jobs = []
-    for name, (scan, lobe_dir) in cases.items():
-        if only not in name:
-            continue
-        case = load_case(scan, lobe_dir)
-        for plane, idx in json.load(open(OUT / name / "picks.json")):
-            jobs.append((case, name, plane, idx))
-    with ThreadPoolExecutor(5) as ex:
-        results = list(ex.map(lambda j: run_one(*j, cfg_base), jobs))
-    (OUT / ("results_scroll_plain.json" if plain else "results_scroll_review.json" if use_reviewer else ("results_scroll.json" if use_tracer else "results_scroll_notracer.json"))).write_text(json.dumps(results, indent=1, default=str))
-    print(json.dumps(results, indent=1, default=str))
-
-
-if __name__ == "__main__":
-    main()
