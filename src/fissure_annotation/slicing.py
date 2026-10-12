@@ -92,5 +92,10 @@ def boundary_mask(lobes: np.ndarray) -> np.ndarray:
     return out
 
 
+def boundary_pair(lobes: np.ndarray, a: int, b: int) -> np.ndarray:
+    "the boundary between lobes `a` and `b` only, ignoring every other lobe"
+    return boundary_mask(np.where(np.isin(lobes, [a, b]), lobes, 0))
+
+
 def save_png(img: np.ndarray, path) -> None:
     Image.fromarray(img).save(path)

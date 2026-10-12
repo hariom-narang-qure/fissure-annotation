@@ -13,7 +13,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 from scipy import ndimage
 
-from fissure_annotation.slicing import LOBE_NAMES, View, boundary_mask
+from fissure_annotation.slicing import LOBE_NAMES, View, boundary_pair
 
 PROMPT = (Path(__file__).parents[2] / "prompts" / "fissure_v2.txt").read_text()
 PROMPT_V3 = (Path(__file__).parents[2] / "prompts" / "fissure_v3.txt").read_text()   # variant E = D + mistake rules
@@ -73,10 +73,6 @@ def boundary_polylines(view: View, box, scale: float, n_points: int = 5) -> list
             out.append((f"{LOBE_NAMES[a]} / {LOBE_NAMES[b]}",
                         [(round((x - c0) / w * 1000), round((y - r0) / h * 1000)) for x, y in pts]))
     return out
-
-
-def boundary_pair(lobes: np.ndarray, a: int, b: int) -> np.ndarray:
-    return boundary_mask(np.where(np.isin(lobes, [a, b]), lobes, 0))
 
 
 def hint_text(polys) -> str:

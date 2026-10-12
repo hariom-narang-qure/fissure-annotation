@@ -21,11 +21,12 @@ from PIL import Image, ImageDraw
 from portkey_ai import Portkey
 
 from fissure_annotation.client import png_data_url
+from fissure_annotation.drawing.lobes import draw_lobe_boundaries
 from fissure_annotation.drawing.ticks import draw_ticks
 from fissure_annotation.experiment import OUT, panel, proxy_scores
-from fissure_annotation.slicing import LOBE_NAMES, cut, load_case, lung_window
+from fissure_annotation.slicing import cut, load_case, lung_window
 from fissure_annotation.tracing import lung_mask, ridge_map, snap
-from fissure_annotation.variants import Prepared, boundary_pair, boundary_polylines, facts, hint_image, prepare, to_slice_pixels, upscaled
+from fissure_annotation.variants import Prepared, boundary_polylines, facts, hint_image, prepare, to_slice_pixels, upscaled
 
 MODEL = "@openai/gpt-6.1-sol"
 PROMPT = (Path(__file__).parents[2] / "prompts" / "fissure_agent.txt").read_text()
@@ -37,7 +38,6 @@ ZOOM_LONG_SIDE = 900
 VIEW_PROPS = {
     "view_id": {"type": "string", "description": "the view whose image you are looking at: 'full' (the first image) or an id returned by zoom. Coordinates you give and receive are in this view's own 0-1000 frame."}}
 CONTRASTS = {"normal": (-600, 1500), "high": (-650, 700)}      # (centre, width) HU; 'high' stretches the -1000..-300 range where fissures live
-PAIR_COLOURS = [(255, 60, 60), (60, 255, 60), (60, 200, 255), (255, 0, 255), (255, 160, 0), (255, 255, 0), (0, 255, 200), (180, 120, 255), (255, 120, 180), (160, 255, 60)]
 FULL = "full"
 
 TOOLS = [
@@ -146,23 +146,10 @@ class Slice:
         img = crop.resize((round(crop.width * scale), round(crop.height * scale)), Image.LANCZOS).convert("RGB")
         legend = []
         if lobes:
-            legend = self.draw_lobes(img, self.view.lobes[ra:rb, ca:cb])
+            legend = draw_lobe_boundaries(img, self.view.lobes[ra:rb, ca:cb])
         if not self.plain:
             draw_ticks(img)
         return img, legend
-
-    def draw_lobes(self, img: Image.Image, sub: np.ndarray) -> list[str]:
-        legend = []
-        px = img.load()
-        for k, (a, b) in enumerate([(a, b) for a in range(1, 6) for b in range(a + 1, 6)]):
-            m = boundary_pair(sub, a, b)
-            if m.sum() < 6:
-                continue
-            big = np.array(Image.fromarray(m.astype(np.uint8) * 255).resize(img.size, Image.NEAREST)) > 0
-            for y, x in zip(*np.nonzero(big)):      # half transparent, so the fissure underneath stays visible
-                px[int(x), int(y)] = tuple((o + c) // 2 for o, c in zip(px[int(x), int(y)], PAIR_COLOURS[k]))
-            legend.append(f"{COLOUR_NAMES[k]} = {LOBE_NAMES[a]} / {LOBE_NAMES[b]}")
-        return legend
 
     def draw_lines(self, img: Image.Image, view_id: str, ids: list[int]) -> None:
         box = self.box(view_id)
@@ -289,7 +276,6 @@ def fixed_prepared(view, box) -> Prepared:
     return Prepared([img], "", box, scale)
 
 
-COLOUR_NAMES = ["red", "green", "light blue", "magenta", "orange", "yellow", "turquoise", "violet", "pink", "lime"]
 
 
 def initial_input(sl: Slice) -> list[dict]:
