@@ -8,7 +8,6 @@ MODEL = "@openai/gpt-6.1-sol"
 class RunConfig:
     plane: str                                   # "coronal" | "axial"
     start: int                                   # the slice whose lines are delivered
-    sides: tuple[str, ...] = ("right", "left")   # lung sides this run may look at and annotate; the one-lung agent names one, the both-lungs scroll agent ignores it
     model: str = MODEL
     max_steps: int = 24
     max_output_tokens: int = 24000
@@ -23,5 +22,3 @@ class RunConfig:
     def __post_init__(self):
         if self.plane not in ("coronal", "axial"):
             raise ValueError(f"unknown plane {self.plane!r}")
-        if not self.sides or any(s not in ("right", "left") for s in self.sides):
-            raise ValueError(f"sides must be a non-empty subset of ('right', 'left'), got {self.sides!r}")

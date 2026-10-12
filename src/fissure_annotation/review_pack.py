@@ -16,7 +16,6 @@ from fissure_annotation.experiment import draw_model_lines
 from fissure_annotation.picker import best_in
 from fissure_annotation.config import RunConfig
 from fissure_annotation.scroll_agent import run_scroll
-from fissure_annotation.side_agent import run_side
 from fissure_annotation.slicing import cut, load_case
 
 AXIS = {"axial": 2, "coronal": 1}
@@ -57,32 +56,16 @@ def run_slice(case, plane: str, idx: int, out_dir: Path, model: str, scroll: boo
             "steps": r["steps"], "slices_visited": visited}
 
 
-def run_slice_sides(case, plane: str, idx: int, out_dir: Path, model: str) -> dict:
-    "the one-lung agents: one image per lung, each the half-lung crop the agent saw beside the same crop with its lines"
-    cfgs = {side: RunConfig(plane=plane, start=idx, sides=(side,), model=model) for side in ("right", "left")}
-    with ThreadPoolExecutor(2) as ex:
-        runs = dict(zip(cfgs, ex.map(lambda s: run_side(case, cfgs[s], out_dir / "logs" / f"{plane}_{idx:04d}_{s}"), cfgs)))
-    summary = {"slice": f"{plane}_{idx:04d}"}
-    for side, r in runs.items():
-        sl = r["stack"].get(side, idx)
-        side_by_side(sl.main, draw_model_lines(sl.main, r["fissures"]),
-                     f"{plane} slice {idx}, {side} lung only: left = lung crop, right = agent's lines ({len(r['fissures'])}); red = clear, yellow = faint; scrolled through slices {r['visited']}"
-                     ).save(out_dir / f"{plane}_{idx:04d}_{side}.png")
-        summary[side] = {"fissures": [{k: f[k] for k in ("name", "side", "confidence", "evidence", "geometry")} for f in r["fissures"]],
-                         "steps": r["steps"], "slices_visited": r["visited"]}
-    return summary
-
-
 def main():
-    "review_pack <scan.nii.gz> <lobe_dir> <out_dir> [model] [scroll|side] [notracer]"
+    "review_pack <scan.nii.gz> <lobe_dir> <out_dir> [model] [scroll] [notracer]"
     scan, lobe_dir, out_dir = sys.argv[1], sys.argv[2], Path(sys.argv[3])
-    model = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] not in ("scroll", "side", "notracer") else MODEL
-    scroll, sides, use_tracer = "scroll" in sys.argv[4:], "side" in sys.argv[4:], "notracer" not in sys.argv[4:]
+    model = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] not in ("scroll", "notracer") else MODEL
+    scroll, use_tracer = "scroll" in sys.argv[4:], "notracer" not in sys.argv[4:]
     out_dir.mkdir(parents=True, exist_ok=True)
     case = load_case(scan, lobe_dir)
     picks = quarter_picks(case)
     with ThreadPoolExecutor(4) as ex:
-        results = list(ex.map(lambda p: run_slice_sides(case, p[0], p[1], out_dir, model) if sides else run_slice(case, p[0], p[1], out_dir, model, scroll, use_tracer), picks))
+        results = list(ex.map(lambda p: run_slice(case, p[0], p[1], out_dir, model, scroll, use_tracer), picks))
     (out_dir / "summary.json").write_text(json.dumps(results, indent=1))
     print(json.dumps(results, indent=1))
 

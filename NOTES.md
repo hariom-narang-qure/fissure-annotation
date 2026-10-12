@@ -145,7 +145,7 @@ Result: no clear accuracy gain from one lung per run. Placement (ON %) is level 
 
 ### Decision after round 6
 
-Half-lung (one lung per run) framing is not pursued for now: it was level with the both-lung scrolling agent on placement, missed fewer fissures, drew about twice as many non-fissure lines, and cost ~1.6x the tokens. Work continues on the full-lung scrolling agent (`scroll_agent.py`). `side_agent.py`, `config.py` (RunConfig) and the half-lung review pack option are kept in the tree for later but unused. Plausible reasons the crop made little difference (untested): the agent already works in zoomed views, so the starting crop matters little; the two-lung crop was already handled lung by lung; telling a run to annotate one lung may push it to produce lines. A narrower focus, one fissure per run ("only the right horizontal"), with "none visible" an expected answer, is an untested alternative.
+Half-lung (one lung per run) framing is not pursued for now: it was level with the both-lung scrolling agent on placement, missed fewer fissures, drew about twice as many non-fissure lines, and cost ~1.6x the tokens. Work continues on the full-lung scrolling agent (`scroll_agent.py`). `side_agent.py`, `prompts/fissure_side_agent.txt`, `slicing.side_view` and the half-lung review pack option were later removed from the tree (see git history before the "remove side agent" commit).
 
 ## Round 7: scrolling agent with the tracer switched off (`RunConfig.use_tracer=False`)
 
