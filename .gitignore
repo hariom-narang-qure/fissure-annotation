@@ -10,6 +10,6 @@ wheels/
 .venv
 .env
 
-# experiment outputs: CT-derived images, lobe masks, model logs and review panels
+# experiment outputs: CT-derived images and model logs
 work/
 review/
