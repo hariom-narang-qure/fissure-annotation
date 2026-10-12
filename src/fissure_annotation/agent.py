@@ -20,7 +20,6 @@ import numpy as np
 from PIL import Image
 from portkey_ai import Portkey
 
-from fissure_annotation.client import png_data_url
 from fissure_annotation.drawing.lines import draw_marked_line, draw_traced_line, line_colour
 from fissure_annotation.lines import CONFIDENCE_OF_STATUS, Fissure, Line, MainPoint, SubmittedLine, Waypoint
 from fissure_annotation.frames import CropFrame, main_to_view, view_to_main
@@ -32,6 +31,7 @@ from fissure_annotation.drawing.ticks import draw_ticks
 from fissure_annotation.config import EXPERIMENT_OUT as OUT
 from fissure_annotation.evaluation.proxy_scores import proxy_scores
 from fissure_annotation.evaluation.review_panel import panel
+from fissure_annotation.tools.schemas import TOOLS
 from fissure_annotation.slicing import cut, load_case, lung_window
 from fissure_annotation.tracing import lung_mask, ridge_map, snap
 from fissure_annotation.variants import Prepared, boundary_polylines, facts, hint_image, prepare, upscaled
@@ -42,39 +42,9 @@ MAX_STEPS = 12
 REASONING = {"effort": "medium"}
 ZOOM_LONG_SIDE = 900
 
-VIEW_PROPS = {
-    "view_id": {"type": "string", "description": "the view whose image you are looking at: 'full' (the first image) or an id returned by zoom. Coordinates you give and receive are in this view's own 0-1000 frame."}}
 CONTRASTS = {"normal": (-600, 1500), "high": (-650, 700)}      # (centre, width) HU; 'high' stretches the -1000..-300 range where fissures live
 FULL = "full"
 CONNECT_COLOUR = (255, 255, 0)
-
-TOOLS = [
-    {"type": "function", "name": "zoom",
-     "description": "Look closely: a magnified crop of the clean slice as a new view. Coordinates x0,y0,x1,y1 are in the frame of `view_id` (default: the full image), so you can zoom into a zoom. Returns the new view's id; from then on, give and receive coordinates in the new view's own 0-1000 frame (ticks are drawn inside the image edges, in that frame).",
-     "parameters": {"type": "object", "properties": {**{k: {"type": "integer", "minimum": 0, "maximum": 1000} for k in ("x0", "y0", "x1", "y1")}, **VIEW_PROPS,
-                    "contrast": {"type": "string", "enum": ["normal", "high"], "description": "high = narrower window that makes a faint fissure stand out against the lung"},
-                    "lobes": {"type": "boolean", "description": "also draw approximate lobe boundaries from the automatic segmentation (imperfect), with a colour legend"}},
-                    "required": ["x0", "y0", "x1", "y1"]}},
-    {"type": "function", "name": "snap",
-     "description": "Trace a fissure. Give 2-6 waypoints along it (ordered from one end to the other) in the frame of `view_id`. A ridge tracer moves each waypoint across the line to the nearest ridge and joins them by a minimal-cost path. The line is stored (numbered) in full-image coordinates, and you get back the traced points in the same view frame, fit statistics, and the view image with the line drawn (thick coloured = traced, thin white = your own waypoints). Pass line_id to redo an existing line.",
-     "parameters": {"type": "object", "properties": {
-         "waypoints": {"type": "array", "minItems": 2, "items": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}, "required": ["x", "y"]}},
-         **VIEW_PROPS,
-         "line_id": {"type": "integer", "description": "existing line to replace; omit for a new line"},
-         "name": {"type": "string", "enum": ["oblique", "horizontal", "accessory", "unknown"]},
-         "side": {"type": "string", "enum": ["right", "left"]}},
-         "required": ["waypoints", "name", "side"]}},
-    {"type": "function", "name": "overlay",
-     "description": "Compare: the clean view next to the same view with lines drawn and numbered (all lines if line_ids omitted; lines outside the view are simply not visible). Use a zoomed view_id to check a line closely.",
-     "parameters": {"type": "object", "properties": {**VIEW_PROPS, "line_ids": {"type": "array", "items": {"type": "integer"}},
-                    "lobes": {"type": "boolean", "description": "also draw approximate lobe boundaries, with a colour legend"}}}},
-    {"type": "function", "name": "submit", "description": "Finish. Lines not listed are dropped.",
-     "parameters": {"type": "object", "properties": {"lines": {"type": "array", "items": {"type": "object", "properties": {
-         "line_id": {"type": "integer"}, "status": {"type": "string", "enum": ["confirmed", "uncertain", "dropped"]},
-         "geometry": {"type": "string", "enum": ["mine", "traced"], "description": "which geometry to keep: your own waypoints, or the traced path"},
-         "evidence": {"type": "string"}}, "required": ["line_id", "status", "geometry", "evidence"]}}}, "required": ["lines"]}},
-]
-
 
 def thin(path: np.ndarray, n: int) -> np.ndarray:
     "about n evenly spaced vertices of a per-pixel path, keeping both ends"

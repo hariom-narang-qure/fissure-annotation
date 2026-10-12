@@ -5,7 +5,6 @@ rings) plus an overview, and answers per line and per point which rule is broken
 agents, so it gives no coordinates and no corrected points. The rules live in prompts/fissure_reviewer_rules.txt so they can be edited.
 """
 import json
-import re
 from pathlib import Path
 
 from PIL import Image
