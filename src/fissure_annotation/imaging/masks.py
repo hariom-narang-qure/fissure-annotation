@@ -3,6 +3,7 @@
 Slices are cut from the RAS-reoriented volume (see slices.py), so going back means:
 - Undo the radiological flip and transpose of each slice, and put it back at its index along the axis of its view, which gives the mask in the RAS volume.
 - A mask is one voxel thick along that axis.
+- Masks of several views are combined with a voxel-wise OR, so a voxel is in the mask when any view marked it.
 - Reorient the RAS volume to the orientation of the source file, so the mask lines up with the scan in any viewer.
 """
 from collections.abc import Mapping
@@ -32,8 +33,11 @@ def reorient_to_source(volume_ras: UInt8[np.ndarray, "x y z"], source: nib.Nifti
     return image
 
 
-def save_mask_like(source_path: Path, masks: Mapping[int, Bool[np.ndarray, "rows columns"]], view: View, out_path: Path) -> None:
+def save_mask_like(source_path: Path, masks_by_view: Mapping[View, Mapping[int, Bool[np.ndarray, "rows columns"]]], out_path: Path) -> None:
     source = nib.load(source_path)
     shape_ras = nib.as_closest_canonical(source).shape
+    volume = np.zeros(shape_ras, dtype=np.uint8)
+    for view, masks in masks_by_view.items():
+        volume |= ras_volume_from_slices(masks, shape_ras, view)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    nib.save(reorient_to_source(ras_volume_from_slices(masks, shape_ras, view), source), out_path)
+    nib.save(reorient_to_source(volume, source), out_path)
