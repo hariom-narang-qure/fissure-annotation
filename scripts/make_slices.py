@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""A NIfTI scan to an axial PNG series. Settings come from a YAML in configs/:
+"""A NIfTI scan to a PNG series of one view (axial by default, or --view coronal / sagittal). Settings come from a YAML in configs/:
 
     uv run python scripts/make_slices.py --config configs/make_slices.yaml
 """

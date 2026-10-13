@@ -1,7 +1,8 @@
 """Put per-slice masks back into a 3D mask in the space of the scan they were cut from.
 
 Slices are cut from the RAS-reoriented volume (see slices.py), so going back means:
-- Undo the radiological flip and transpose of each slice, which puts the mask in the RAS volume.
+- Undo the radiological flip and transpose of each slice, and put it back at its index along the axis of its view, which gives the mask in the RAS volume.
+- A mask is one voxel thick along that axis.
 - Reorient the RAS volume to the orientation of the source file, so the mask lines up with the scan in any viewer.
 """
 from collections.abc import Mapping
@@ -12,12 +13,14 @@ import numpy as np
 from jaxtyping import Bool, UInt8
 from nibabel import orientations
 
+from fissure_annotation.imaging.slices import View, plane_selector
 
-def ras_volume_from_slices(masks: Mapping[int, Bool[np.ndarray, "y x"]], shape_ras: tuple[int, int, int]) -> UInt8[np.ndarray, "x y z"]:
+
+def ras_volume_from_slices(masks: Mapping[int, Bool[np.ndarray, "rows columns"]], shape_ras: tuple[int, int, int], view: View) -> UInt8[np.ndarray, "x y z"]:
     "slices without a mask stay empty"
     volume = np.zeros(shape_ras, dtype=np.uint8)
-    for z, mask in masks.items():
-        volume[:, :, z] = mask[::-1, ::-1].T
+    for index, mask in masks.items():
+        volume[plane_selector(view, index)] = mask[::-1, ::-1].T
     return volume
 
 
@@ -29,8 +32,8 @@ def reorient_to_source(volume_ras: UInt8[np.ndarray, "x y z"], source: nib.Nifti
     return image
 
 
-def save_mask_like(source_path: Path, masks: Mapping[int, Bool[np.ndarray, "y x"]], out_path: Path) -> None:
+def save_mask_like(source_path: Path, masks: Mapping[int, Bool[np.ndarray, "rows columns"]], view: View, out_path: Path) -> None:
     source = nib.load(source_path)
     shape_ras = nib.as_closest_canonical(source).shape
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    nib.save(reorient_to_source(ras_volume_from_slices(masks, shape_ras), source), out_path)
+    nib.save(reorient_to_source(ras_volume_from_slices(masks, shape_ras, view), source), out_path)

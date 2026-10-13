@@ -4,7 +4,7 @@ ZOOM = {
     "type": "function", "name": "zoom",
     "description": "Enlarged crop of the slice with pixel-coordinate ticks (original pixel coordinates).",
     "parameters": {"type": "object", "required": ["x0", "y0", "x1", "y1", "scale"], "properties": {
-        **{corner: {"type": "integer", "minimum": 0, "maximum": 512} for corner in ("x0", "y0", "x1", "y1")},
+        **{corner: {"type": "integer", "minimum": 0, "maximum": 4096} for corner in ("x0", "y0", "x1", "y1")},
         "scale": {"type": "integer", "minimum": 1, "maximum": 6}}},
 }
 

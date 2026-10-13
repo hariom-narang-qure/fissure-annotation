@@ -15,7 +15,7 @@ from portkey_ai import Portkey
 from fissure_annotation.agent import AgentSettings, SliceLog, run_slice
 from fissure_annotation.imaging.overlay import contact_sheet, labelled, red_overlay
 from fissure_annotation.imaging.png import read_gray, save_png
-from fissure_annotation.imaging.slices import slice_file_name, write_slices
+from fissure_annotation.imaging.slices import View, slice_file_name, write_slices
 from fissure_annotation.settings import ExperimentSettings
 from fissure_annotation.waypoints import RunFolder
 
@@ -39,10 +39,11 @@ class WaypointExperiment(ExperimentSettings):
 class SliceExport(ExperimentSettings):
     nifti: Path
     out_dir: Path
+    view: View = "axial"
 
 
 def export_slices(config: SliceExport) -> int:
-    return write_slices(config.nifti, config.out_dir)
+    return write_slices(config.nifti, config.out_dir, config.view)
 
 
 def portkey_client() -> Portkey:
@@ -71,7 +72,7 @@ def write_sheets(config: WaypointExperiment) -> None:
 
 
 def crop_to_lungs(config: WaypointExperiment, tile: UInt8[np.ndarray, "h w c"]) -> UInt8[np.ndarray, "h w c"]:
-    x0, y0, x1, y1 = config.agent.overlay_box
+    x0, y0, x1, y1 = config.agent.overlay_box_for(tile.shape[:2])
     return np.ascontiguousarray(tile[y0:y1, x0:x1])
 
 

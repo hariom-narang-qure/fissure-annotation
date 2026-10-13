@@ -17,14 +17,20 @@ from pydantic import BaseModel
 
 from fissure_annotation.imaging.overlay import red_overlay
 from fissure_annotation.imaging.png import read_gray, save_png
-from fissure_annotation.imaging.slices import slice_file_name
+from fissure_annotation.imaging.slices import View, slice_file_name
 from fissure_annotation.imaging.ticks import Box, crop_with_ticks
 from fissure_annotation.imaging.tracing import trace_mask
 from fissure_annotation.settings import ExperimentSettings
 from fissure_annotation.tools import TOOLS
 from fissure_annotation.waypoints import Fissure, RunFolder, SliceWaypoints
 
-INSTRUCTIONS = (Path(__file__).parents[2] / "prompts" / "waypoint_agent.txt").read_text()
+INSTRUCTIONS_TEMPLATE = (Path(__file__).parents[2] / "prompts" / "waypoint_agent.txt").read_text()
+ORIENTATIONS = {
+    "axial": "anterior up, patient right on image left",
+    "coronal": "superior up, patient right on image left",
+    "sagittal": "superior up, anterior on image left",
+}
+AXIAL_LUNG_HINT = " The lungs are roughly x 40-480, y 120-420 of the 512x512 slice."
 MIN_CROP_PX = 8
 OVERLAY_SCALE = 3
 
@@ -35,7 +41,11 @@ class AgentSettings(ExperimentSettings):
     max_output_tokens: int = 24000
     max_steps: int = 14
     max_traces: int = 3
-    overlay_box: Box = (40, 120, 480, 420)  # the lungs of a 512 x 512 slice, so the overlay shows the whole fissure context
+    view: View = "axial"
+    overlay_box: Box = (40, 120, 480, 420)  # the lungs of a 512 x 512 axial slice, so the overlay shows the whole fissure context; other views show the whole slice
+
+    def overlay_box_for(self, shape: tuple[int, int]) -> Box:
+        return self.overlay_box if self.view == "axial" else (0, 0, shape[1], shape[0])
 
 
 class SliceLog(BaseModel):
@@ -90,16 +100,22 @@ class SliceSession:
         overlay = red_overlay(self.image, mask)
         save_png(mask.astype(np.uint8) * 255, self.folder.mask_path(self.slice_png))
         save_png(overlay, self.folder.overlay_path(self.slice_png))
-        return [text(f"{len(parsed)} fissures, {int(mask.sum())} px traced"), image(crop_with_ticks(overlay, self.settings.overlay_box, OVERLAY_SCALE))]
+        return [text(f"{len(parsed)} fissures, {int(mask.sum())} px traced"), image(crop_with_ticks(overlay, self.settings.overlay_box_for(overlay.shape[:2]), OVERLAY_SCALE))]
+
+
+def instructions_for(view: View) -> str:
+    return INSTRUCTIONS_TEMPLATE.format(view=view, orientation=ORIENTATIONS[view], lung_hint=AXIAL_LUNG_HINT if view == "axial" else "")
 
 
 def request_settings(settings: AgentSettings) -> dict:
-    return dict(model=settings.model, instructions=INSTRUCTIONS, tools=TOOLS,
+    return dict(model=settings.model, instructions=instructions_for(settings.view), tools=TOOLS,
                 reasoning={"effort": settings.reasoning_effort}, max_output_tokens=settings.max_output_tokens)
 
 
 def first_input(session: SliceSession) -> list[dict]:
-    return [{"role": "user", "content": [text(f"Slice {session.slice_index}."), image(Image.fromarray(session.image))]}]
+    height, width = session.image.shape
+    description = f"{session.settings.view.capitalize()} slice {session.slice_index}, {width}x{height} px."
+    return [{"role": "user", "content": [text(description), image(Image.fromarray(session.image))]}]
 
 
 def run_slice(client, settings: AgentSettings, folder: RunFolder, slices_dir: Path, slice_index: int) -> SliceLog:

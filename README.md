@@ -1,11 +1,11 @@
 # fissure-annotation
 
-Prototype: a vision model (GPT-6.1-Sol via Portkey) picks waypoints along lung fissures on axial CT slices, and a classical ridge tracer joins them.
+Prototype: a vision model (GPT-6.1-Sol via Portkey) picks waypoints along lung fissures on axial, coronal or sagittal CT slices, and a classical ridge tracer joins them.
 Research only, not diagnostic.
 
 ## How it works
 
-- `imaging/` cuts a NIfTI scan into smoothed, lung-windowed axial PNGs and traces a ridge path between waypoints.
+- `imaging/` cuts a NIfTI scan into smoothed, lung-windowed PNGs (axial, coronal or sagittal) and traces a ridge path between waypoints.
   - It imports nothing else from the package, and a test keeps it that way.
 - `agent.py` runs one model conversation per slice with three tools: `zoom` (a crop with pixel ticks), `trace_points` and `finish`.
   - The waypoints are saved to `points/` before they are traced, so they can be reloaded later.
@@ -26,8 +26,10 @@ Research only, not diagnostic.
         --nifti scan.nii.gz --mask-path out/scan_fissures.nii.gz --first-slice 165 --last-slice 179
 
 - The mask is a 0/1 `uint8` NIfTI with the same shape and affine as the scan, one voxel wide in plane and one slice thick.
+- `--view axial|coronal|sagittal` (default axial) picks the plane the model annotates, and the model is told which one. Slice numbers count along that view's axis, so a sagittal run has as many slices as the scan has columns.
+- Coronal and sagittal slices are cut on the voxel grid, so they look stretched along z when the slice spacing differs from the in-plane spacing.
 - The agent calls the model once per slice. Leave out `--first-slice` and `--last-slice` to run every slice, which costs roughly 15k input tokens per slice.
-- The slice PNGs and the agent's points, masks and logs go to `<mask name>_work/` next to the mask, or to `--work-dir`.
+- The slice PNGs and the agent's points, masks and logs go to `<mask name>_<view>_work/` next to the mask, or to `--work-dir`.
 - Running the same command again skips slices that already have a log, so a run that failed halfway can be finished.
 
 ## Earlier pipeline
