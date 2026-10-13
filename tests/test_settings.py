@@ -27,11 +27,16 @@ def test_values_come_from_the_yaml(yaml_file):
 
 
 def test_a_flag_wins_over_the_yaml(yaml_file):
-    assert load_settings(Config, ["--config", str(yaml_file), "--scan", "b.nii.gz"]).scan == "b.nii.gz"
+    assert (
+        load_settings(Config, ["--config", str(yaml_file), "--scan", "b.nii.gz"]).scan
+        == "b.nii.gz"
+    )
 
 
 def test_overriding_one_key_of_a_section_keeps_the_files_other_keys(yaml_file):
-    config = load_settings(Config, ["--config", str(yaml_file), "--agent.reasoning", "high"])
+    config = load_settings(
+        Config, ["--config", str(yaml_file), "--agent.reasoning", "high"]
+    )
     assert (config.agent.reasoning, config.agent.max_steps) == ("high", 20)
 
 

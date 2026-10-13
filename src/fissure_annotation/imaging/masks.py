@@ -6,6 +6,7 @@ Slices are cut from the RAS-reoriented volume (see slices.py), so going back mea
 - Masks of several views are combined with a voxel-wise OR, so a voxel is in the mask when any view marked it.
 - Reorient the RAS volume to the orientation of the source file, so the mask lines up with the scan in any viewer.
 """
+
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -17,7 +18,11 @@ from nibabel import orientations
 from fissure_annotation.imaging.slices import View, plane_selector
 
 
-def ras_volume_from_slices(masks: Mapping[int, Bool[np.ndarray, "rows columns"]], shape_ras: tuple[int, int, int], view: View) -> UInt8[np.ndarray, "x y z"]:
+def ras_volume_from_slices(
+    masks: Mapping[int, Bool[np.ndarray, "rows columns"]],
+    shape_ras: tuple[int, int, int],
+    view: View,
+) -> UInt8[np.ndarray, "x y z"]:
     "slices without a mask stay empty"
     volume = np.zeros(shape_ras, dtype=np.uint8)
     for index, mask in masks.items():
@@ -25,15 +30,28 @@ def ras_volume_from_slices(masks: Mapping[int, Bool[np.ndarray, "rows columns"]]
     return volume
 
 
-def reorient_to_source(volume_ras: UInt8[np.ndarray, "x y z"], source: nib.Nifti1Image) -> nib.Nifti1Image:
+def reorient_to_source(
+    volume_ras: UInt8[np.ndarray, "x y z"], source: nib.Nifti1Image
+) -> nib.Nifti1Image:
     canonical = nib.as_closest_canonical(source)
-    transform = orientations.ornt_transform(orientations.io_orientation(canonical.affine), orientations.io_orientation(source.affine))
-    image = nib.Nifti1Image(orientations.apply_orientation(volume_ras, transform), source.affine, header=source.header)
+    transform = orientations.ornt_transform(
+        orientations.io_orientation(canonical.affine),
+        orientations.io_orientation(source.affine),
+    )
+    image = nib.Nifti1Image(
+        orientations.apply_orientation(volume_ras, transform),
+        source.affine,
+        header=source.header,
+    )
     image.set_data_dtype(np.uint8)
     return image
 
 
-def save_mask_like(source_path: Path, masks_by_view: Mapping[View, Mapping[int, Bool[np.ndarray, "rows columns"]]], out_path: Path) -> None:
+def save_mask_like(
+    source_path: Path,
+    masks_by_view: Mapping[View, Mapping[int, Bool[np.ndarray, "rows columns"]]],
+    out_path: Path,
+) -> None:
     source = nib.load(source_path)
     shape_ras = nib.as_closest_canonical(source).shape
     volume = np.zeros(shape_ras, dtype=np.uint8)

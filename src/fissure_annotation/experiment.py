@@ -4,6 +4,7 @@
 - Everything that distinguishes one run from another (scan, slices, model) is in the YAML config.
 - Output goes under `out_dir`: points/, masks/, overlays/, logs/ and contact_sheet.png (see waypoints.RunFolder).
 """
+
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -53,9 +54,18 @@ def portkey_client() -> Portkey:
 def run_slices(config: WaypointExperiment, client) -> list[SliceLog]:
     "slices that already have a log are skipped, so a run that failed halfway is finished by running it again"
     folder = RunFolder(root=config.out_dir)
-    pending = [z for z in config.slice_indices if not folder.log_path(config.slices_dir / slice_file_name(z)).exists()]
+    pending = [
+        z
+        for z in config.slice_indices
+        if not folder.log_path(config.slices_dir / slice_file_name(z)).exists()
+    ]
     with ThreadPoolExecutor(config.workers) as pool:
-        return list(pool.map(lambda z: run_slice(client, config.agent, folder, config.slices_dir, z), pending))
+        return list(
+            pool.map(
+                lambda z: run_slice(client, config.agent, folder, config.slices_dir, z),
+                pending,
+            )
+        )
 
 
 def run_experiment(config: WaypointExperiment, client) -> list[SliceLog]:
@@ -71,31 +81,51 @@ def write_sheets(config: WaypointExperiment) -> None:
     save_png(side_by_side_sheet(config, folder), config.out_dir / "side_by_side.png")
 
 
-def crop_to_lungs(config: WaypointExperiment, tile: UInt8[np.ndarray, "h w c"]) -> UInt8[np.ndarray, "h w c"]:
+def crop_to_lungs(
+    config: WaypointExperiment, tile: UInt8[np.ndarray, "h w c"]
+) -> UInt8[np.ndarray, "h w c"]:
     x0, y0, x1, y1 = config.agent.overlay_box_for(tile.shape[:2])
     return np.ascontiguousarray(tile[y0:y1, x0:x1])
 
 
-def original_tile(config: WaypointExperiment, slice_index: int) -> UInt8[np.ndarray, "h w 3"]:
+def original_tile(
+    config: WaypointExperiment, slice_index: int
+) -> UInt8[np.ndarray, "h w 3"]:
     image = read_gray(config.slices_dir / slice_file_name(slice_index))
-    return labelled(crop_to_lungs(config, np.stack([image] * 3, axis=-1)), f"z={slice_index} original")
+    return labelled(
+        crop_to_lungs(config, np.stack([image] * 3, axis=-1)),
+        f"z={slice_index} original",
+    )
 
 
-def result_tile(config: WaypointExperiment, folder: RunFolder, slice_index: int) -> UInt8[np.ndarray, "h w 3"]:
+def result_tile(
+    config: WaypointExperiment, folder: RunFolder, slice_index: int
+) -> UInt8[np.ndarray, "h w 3"]:
     "the traced slice, or the plain slice when the model traced nothing, cropped to the lungs"
     slice_png = config.slices_dir / slice_file_name(slice_index)
     image = read_gray(slice_png)
     mask_path = folder.mask_path(slice_png)
-    tile = red_overlay(image, read_gray(mask_path) > 0) if mask_path.exists() else np.stack([image] * 3, axis=-1)
+    tile = (
+        red_overlay(image, read_gray(mask_path) > 0)
+        if mask_path.exists()
+        else np.stack([image] * 3, axis=-1)
+    )
     return labelled(crop_to_lungs(config, tile), f"z={slice_index}")
 
 
-def sheet_of_results(config: WaypointExperiment, folder: RunFolder) -> UInt8[np.ndarray, "h w 3"]:
+def sheet_of_results(
+    config: WaypointExperiment, folder: RunFolder
+) -> UInt8[np.ndarray, "h w 3"]:
     tiles = [result_tile(config, folder, z) for z in config.slice_indices]
     return contact_sheet(tiles, CONTACT_SHEET_COLUMNS)
 
 
-def side_by_side_sheet(config: WaypointExperiment, folder: RunFolder) -> UInt8[np.ndarray, "h w 3"]:
+def side_by_side_sheet(
+    config: WaypointExperiment, folder: RunFolder
+) -> UInt8[np.ndarray, "h w 3"]:
     "each tile is the original slice next to its annotated slice"
-    pairs = [np.hstack([original_tile(config, z), result_tile(config, folder, z)]) for z in config.slice_indices]
+    pairs = [
+        np.hstack([original_tile(config, z), result_tile(config, folder, z)])
+        for z in config.slice_indices
+    ]
     return contact_sheet(pairs, SIDE_BY_SIDE_COLUMNS)

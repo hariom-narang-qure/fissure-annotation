@@ -8,7 +8,7 @@ def arc_image() -> tuple[np.ndarray, list[int]]:
     image = np.full((60, 60), 50, dtype=np.uint8)
     rows = [30 + round(8 * np.sin(np.pi * x / 59)) for x in range(60)]
     for x, row in enumerate(rows):
-        image[row - 1:row + 2, x] = 200
+        image[row - 1 : row + 2, x] = 200
     return image, rows
 
 
@@ -22,7 +22,11 @@ def test_the_trace_follows_the_ridge_between_two_waypoints():
 
 def test_the_trace_passes_through_every_waypoint():
     image, rows = arc_image()
-    waypoints = [(2, rows[2]), (30, 20), (57, rows[57])]  # the middle one is off the arc on purpose
+    waypoints = [
+        (2, rows[2]),
+        (30, 20),
+        (57, rows[57]),
+    ]  # the middle one is off the arc on purpose
     mask = trace_mask(image, [waypoints])
     assert all(mask[y, x] for x, y in waypoints)
 

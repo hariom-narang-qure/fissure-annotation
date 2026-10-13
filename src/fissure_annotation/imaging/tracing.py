@@ -6,6 +6,7 @@ Steps, and why:
   - 85 and 4.25 are 200 HU and 10 HU in the 8-bit levels of the 600 HU lung window (see slices.py).
 - The waypoints are fixed anchors. The path between consecutive anchors is the minimal-cost path, so the line follows the ridge and still passes through every waypoint.
 """
+
 from collections.abc import Sequence
 
 import numpy as np
@@ -22,7 +23,9 @@ Point = tuple[int, int]  # (x, y) = (column, row)
 
 def ridge_strength(image: UInt8[np.ndarray, "h w"]) -> Float[np.ndarray, "h w"]:
     pixels = image.astype(float)
-    laplacian = ndimage.gaussian_filter(pixels, RIDGE_SIGMA_PX, order=(2, 0)) + ndimage.gaussian_filter(pixels, RIDGE_SIGMA_PX, order=(0, 2))
+    laplacian = ndimage.gaussian_filter(
+        pixels, RIDGE_SIGMA_PX, order=(2, 0)
+    ) + ndimage.gaussian_filter(pixels, RIDGE_SIGMA_PX, order=(0, 2))
     return np.clip(-laplacian, 0, None)
 
 
@@ -30,13 +33,23 @@ def path_cost(image: UInt8[np.ndarray, "h w"]) -> Float[np.ndarray, "h w"]:
     return 1 / (1 + np.clip(ridge_strength(image), 0, RIDGE_CAP) / RIDGE_SCALE) ** 2
 
 
-def trace_between(cost: Float[np.ndarray, "h w"], start: Point, end: Point) -> list[tuple[int, int]]:
+def trace_between(
+    cost: Float[np.ndarray, "h w"], start: Point, end: Point
+) -> list[tuple[int, int]]:
     "pixels as (row, column)"
-    path, _ = route_through_array(cost, (start[1], start[0]), (end[1], end[0]), fully_connected=True, geometric=True)
+    path, _ = route_through_array(
+        cost,
+        (start[1], start[0]),
+        (end[1], end[0]),
+        fully_connected=True,
+        geometric=True,
+    )
     return path
 
 
-def trace_mask(image: UInt8[np.ndarray, "h w"], fissures: Sequence[Sequence[Point]]) -> Bool[np.ndarray, "h w"]:
+def trace_mask(
+    image: UInt8[np.ndarray, "h w"], fissures: Sequence[Sequence[Point]]
+) -> Bool[np.ndarray, "h w"]:
     cost = path_cost(image)
     mask = np.zeros(image.shape, dtype=bool)
     for waypoints in fissures:

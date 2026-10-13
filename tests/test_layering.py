@@ -1,4 +1,5 @@
 """CLAUDE.md says layers depend downward only. The imaging layer is the bottom one: it must not know about models or the rest of the package."""
+
 import ast
 from pathlib import Path
 
@@ -18,7 +19,12 @@ def imported_modules(path: Path) -> set[str]:
 
 def test_imaging_imports_nothing_from_the_rest_of_the_package():
     for path in IMAGING.glob("*.py"):
-        outside = {m for m in imported_modules(path) if m.startswith("fissure_annotation") and not m.startswith("fissure_annotation.imaging")}
+        outside = {
+            m
+            for m in imported_modules(path)
+            if m.startswith("fissure_annotation")
+            and not m.startswith("fissure_annotation.imaging")
+        }
         assert not outside, f"{path.name} imports {sorted(outside)}"
 
 

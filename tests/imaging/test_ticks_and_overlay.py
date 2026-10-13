@@ -10,7 +10,10 @@ def test_ticks_fall_on_multiples_of_twenty_inside_the_box():
 
 def test_the_crop_is_scaled_and_gets_a_margin():
     image = np.zeros((100, 120), dtype=np.uint8)
-    assert crop_with_ticks(image, (10, 20, 50, 70), 3).size == (40 * 3 + MARGIN_PX, 50 * 3 + MARGIN_PX)
+    assert crop_with_ticks(image, (10, 20, 50, 70), 3).size == (
+        40 * 3 + MARGIN_PX,
+        50 * 3 + MARGIN_PX,
+    )
 
 
 def test_the_overlay_marks_the_mask_in_red_and_leaves_the_rest_grey():

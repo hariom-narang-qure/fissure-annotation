@@ -4,12 +4,17 @@
 - Flags are for one-off changes on top of it, and nested sections use dotted flags such as `--agent.use-tracer false`.
 - Environment variables are switched off, otherwise a variable named `MODEL` would silently override a field.
 """
+
 import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
 import yaml
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 
 class ExperimentSettings(BaseSettings):

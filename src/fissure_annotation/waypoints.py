@@ -3,6 +3,7 @@
 The waypoints are saved before anything is traced, so the manual part of every run can be reloaded and traced again with a different tracer.
 The JSON layout is the one earlier runs wrote, so their points load too.
 """
+
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -23,6 +24,7 @@ class SliceWaypoints(BaseModel):
 
 class RunFolder(BaseModel):
     "one folder per run: points/, masks/, overlays/ and logs/, each file named after its slice PNG"
+
     root: Path
 
     def points_path(self, slice_png: Path) -> Path:
@@ -43,4 +45,6 @@ class RunFolder(BaseModel):
         path.write_text(waypoints.model_dump_json(indent=1))
 
     def load_waypoints(self, slice_png: Path) -> SliceWaypoints:
-        return SliceWaypoints.model_validate_json(self.points_path(slice_png).read_text())
+        return SliceWaypoints.model_validate_json(
+            self.points_path(slice_png).read_text()
+        )
