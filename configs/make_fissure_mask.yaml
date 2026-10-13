@@ -1,0 +1,2 @@
+# Paths come from flags (--nifti, --mask-path), and the views (any of axial, coronal, sagittal) from --views. Everything else defaults to the values of the waypoint agent runs.
+workers: 16

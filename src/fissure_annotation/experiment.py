@@ -15,7 +15,7 @@ from portkey_ai import Portkey
 from fissure_annotation.agent import AgentSettings, SliceLog, run_slice
 from fissure_annotation.imaging.overlay import contact_sheet, labelled, red_overlay
 from fissure_annotation.imaging.png import read_gray, save_png
-from fissure_annotation.imaging.slices import slice_file_name, write_slices
+from fissure_annotation.imaging.slices import View, slice_file_name, write_slices
 from fissure_annotation.settings import ExperimentSettings
 from fissure_annotation.waypoints import RunFolder
 
@@ -28,6 +28,7 @@ class WaypointExperiment(ExperimentSettings):
     out_dir: Path
     first_slice: int
     last_slice: int
+    workers: int = 16
     agent: AgentSettings = AgentSettings()
 
     @property
@@ -38,20 +39,27 @@ class WaypointExperiment(ExperimentSettings):
 class SliceExport(ExperimentSettings):
     nifti: Path
     out_dir: Path
+    view: View = "axial"
 
 
 def export_slices(config: SliceExport) -> int:
-    return write_slices(config.nifti, config.out_dir)
+    return write_slices(config.nifti, config.out_dir, config.view)
 
 
 def portkey_client() -> Portkey:
     return Portkey(api_key=os.environ["PORTKEY_API_KEY"])
 
 
-def run_experiment(config: WaypointExperiment, client) -> list[SliceLog]:
+def run_slices(config: WaypointExperiment, client) -> list[SliceLog]:
+    "slices that already have a log are skipped, so a run that failed halfway is finished by running it again"
     folder = RunFolder(root=config.out_dir)
-    with ThreadPoolExecutor(len(config.slice_indices)) as pool:
-        logs = list(pool.map(lambda z: run_slice(client, config.agent, folder, config.slices_dir, z), config.slice_indices))
+    pending = [z for z in config.slice_indices if not folder.log_path(config.slices_dir / slice_file_name(z)).exists()]
+    with ThreadPoolExecutor(config.workers) as pool:
+        return list(pool.map(lambda z: run_slice(client, config.agent, folder, config.slices_dir, z), pending))
+
+
+def run_experiment(config: WaypointExperiment, client) -> list[SliceLog]:
+    logs = run_slices(config, client)
     write_sheets(config)
     return logs
 
@@ -64,7 +72,7 @@ def write_sheets(config: WaypointExperiment) -> None:
 
 
 def crop_to_lungs(config: WaypointExperiment, tile: UInt8[np.ndarray, "h w c"]) -> UInt8[np.ndarray, "h w c"]:
-    x0, y0, x1, y1 = config.agent.overlay_box
+    x0, y0, x1, y1 = config.agent.overlay_box_for(tile.shape[:2])
     return np.ascontiguousarray(tile[y0:y1, x0:x1])
 
 
