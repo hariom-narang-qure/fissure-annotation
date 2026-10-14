@@ -1,0 +1,5 @@
+# Paths come from flags (--mask-path, --lobes, --out-dir). The views are the ones make_fissure_mask was run with, each needs its mask next to the combined one.
+views: [axial, coronal, sagittal]
+max_distance_mm: 10.0
+# 1 when the model annotated every slice, 2 for every other slice, 3 for every third. The sheet settings follow it unless they are set under `sheet:`.
+slice_step: 1

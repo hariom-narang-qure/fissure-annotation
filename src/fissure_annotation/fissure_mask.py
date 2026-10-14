@@ -3,6 +3,8 @@
 - Every slice of each chosen view (axial, coronal or sagittal) goes through the waypoint agent, so the cost scales with the number of slices and views.
 - The traced lines of each slice are stacked into a 0/1 mask per view, one voxel wide in plane and one slice thick.
 - The masks of the views are combined with a voxel-wise OR, so a fissure seen in any view is in the final mask.
+- The mask of each view is also saved beside the combined one, as `<mask name>_<view>.nii.gz`.
+  - Post-processing judges the lines of each view on its own, which is not possible once the views are combined.
 - Slices outside the range, and slices where the model traced nothing, are empty.
 """
 
@@ -52,6 +54,11 @@ class FissureMaskJob(ExperimentSettings):
         )
 
 
+def view_mask_path(mask_path: Path, view: View) -> Path:
+    name = mask_path.name.removesuffix(".nii.gz")
+    return mask_path.with_name(f"{name}_{view}.nii.gz")
+
+
 def view_masks(
     job: FissureMaskJob, view: View, client
 ) -> dict[int, Bool[np.ndarray, "rows columns"]]:
@@ -75,9 +82,8 @@ def view_masks(
 
 
 def make_fissure_mask(job: FissureMaskJob, client) -> Path:
-    save_mask_like(
-        job.nifti,
-        {view: view_masks(job, view, client) for view in job.views},
-        job.mask_path,
-    )
+    masks_by_view = {view: view_masks(job, view, client) for view in job.views}
+    for view, masks in masks_by_view.items():
+        save_mask_like(job.nifti, {view: masks}, view_mask_path(job.mask_path, view))
+    save_mask_like(job.nifti, masks_by_view, job.mask_path)
     return job.mask_path
