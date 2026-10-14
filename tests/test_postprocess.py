@@ -3,7 +3,12 @@ import numpy as np
 import pytest
 
 from fissure_annotation.imaging.lobes import LEFT_LOWER, LEFT_UPPER
-from fissure_annotation.postprocess import PostProcessJob, post_process_fissure_masks
+from fissure_annotation.postprocess import (
+    PostProcessJob,
+    SheetSettings,
+    post_process_fissure_masks,
+    sheet_parameters,
+)
 
 SIZE = 40
 BOUNDARY_X = 20  # the left upper lobe is below it and the left lower lobe from it up
@@ -92,3 +97,35 @@ def test_masks_on_another_grid_than_the_lobes_are_refused(tmp_path):
     )
     with pytest.raises(ValueError, match="voxel grid of the lobes"):
         post_process_fissure_masks(job_for(tmp_path, ["axial"]))
+
+
+def test_a_slice_step_of_one_keeps_the_settings_of_the_full_run():
+    parameters = sheet_parameters(SheetSettings(), slice_step=1)
+    assert parameters == {
+        "sigma_pca": 3.0,
+        "sigma_along": 3.0,
+        "sigma_across": 1.0,
+        "min_strength": 0.3,
+    }
+
+
+def test_the_sheet_settings_follow_the_slice_step():
+    parameters = sheet_parameters(SheetSettings(), slice_step=3)
+    assert parameters["sigma_pca"] == 5.0 and parameters["sigma_along"] == 5.0
+    assert parameters["min_strength"] == pytest.approx(0.1)
+    assert parameters["sigma_across"] == 1.0  # jitter between slices does not change
+
+
+def test_a_setting_in_the_config_is_never_changed_by_the_slice_step():
+    parameters = sheet_parameters(SheetSettings(min_strength=0.2), slice_step=3)
+    assert parameters["min_strength"] == 0.2 and parameters["sigma_along"] == 5.0
+
+
+def test_a_slice_step_below_one_is_refused(tmp_path):
+    with pytest.raises(ValueError):
+        PostProcessJob(
+            mask_path=tmp_path / "m.nii.gz",
+            lobes=tmp_path / "l.nii.gz",
+            out_dir=tmp_path,
+            slice_step=0,
+        )
