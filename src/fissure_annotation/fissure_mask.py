@@ -6,13 +6,16 @@
 - The mask of each view is also saved beside the combined one, as `<mask name>_<view>.nii.gz`.
   - Post-processing judges the lines of each view on its own, which is not possible once the views are combined.
 - Slices outside the range, and slices where the model traced nothing, are empty.
+- With `slice_step` above 1 only every slice_step-th slice of the range, and the last one, goes through the agent.
+  - The cost drops by about that factor, and the slices in between are empty.
+  - Post-processing needs the same `slice_step`, since the lines are then further apart.
 """
 
 from pathlib import Path
 
 import numpy as np
 from jaxtyping import Bool
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from fissure_annotation.agent import AgentSettings
 from fissure_annotation.experiment import WaypointExperiment, run_slices
@@ -32,6 +35,9 @@ class FissureMaskJob(ExperimentSettings):
     )
     first_slice: int = 0  # slice numbers count along the axis of the view, so a range only makes sense for one view
     last_slice: int | None = None  # the last slice of the view when not given
+    slice_step: int = Field(
+        default=1, ge=1
+    )  # 2 annotates every other slice of the range of each view, and always the last one
     workers: int = 16
     agent: AgentSettings = AgentSettings()
 
@@ -69,6 +75,7 @@ def view_masks(
         out_dir=folder / "run",
         first_slice=job.first_slice,
         last_slice=slice_count - 1 if job.last_slice is None else job.last_slice,
+        slice_step=job.slice_step,
         workers=job.workers,
         agent=job.agent.model_copy(update={"view": view}),
     )

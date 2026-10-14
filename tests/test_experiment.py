@@ -35,6 +35,34 @@ def test_the_slice_range_is_inclusive(config):
     assert config.slice_indices == [1, 2, 3]
 
 
+def test_a_slice_step_takes_every_step_th_slice_and_always_the_last_one(tmp_path):
+    def indices(first, last, step):
+        return WaypointExperiment(
+            slices_dir=tmp_path,
+            out_dir=tmp_path,
+            first_slice=first,
+            last_slice=last,
+            slice_step=step,
+        ).slice_indices
+
+    assert indices(3, 14, 4) == [3, 7, 11, 14]  # the last slice is added
+    # and it is not repeated when it falls on the step
+    assert indices(3, 15, 4) == [3, 7, 11, 15]
+    assert indices(3, 14, 1) == list(range(3, 15))  # a step of 1 is the whole range
+    assert indices(5, 5, 3) == [5]
+
+
+def test_a_slice_step_below_one_is_refused(tmp_path):
+    with pytest.raises(ValueError):
+        WaypointExperiment(
+            slices_dir=tmp_path,
+            out_dir=tmp_path,
+            first_slice=0,
+            last_slice=5,
+            slice_step=0,
+        )
+
+
 def test_the_yaml_config_loads_with_the_agent_defaults(tmp_path):
     path = tmp_path / "experiment.yaml"
     path.write_text("slices_dir: s\nout_dir: o\nfirst_slice: 153\nlast_slice: 167\n")
