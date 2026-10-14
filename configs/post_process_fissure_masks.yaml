@@ -1,0 +1,3 @@
+# Paths come from flags (--mask-path, --lobes, --out-dir). The views are the ones make_fissure_mask was run with, each needs its mask next to the combined one.
+views: [axial, coronal, sagittal]
+max_distance_mm: 10.0
