@@ -7,7 +7,8 @@ Why:
 - Each view is blind to some fissures, so the views are blended after cleaning and not before.
 
 How:
-1. A band around the lobe interfaces is made from a lung lobe segmentation (`imaging/lobes.py`).
+0. The lung lobes are segmented from the scan (`segmentation.py`), unless the lobes file exists already.
+1. A band around the lobe interfaces is made from the lobes (`imaging/lobes.py`).
 2. The lines of each view are judged on their own (`imaging/lines.py`).
    - A line with no point within `max_distance_mm` of the band is removed, any other line is kept whole.
    - Removed lines of all views are saved as one mask, so they can be checked.
@@ -24,11 +25,12 @@ Annotating every `slice_step`-th slice cuts the cost of the model by about that 
   - The settings of the full run lost 11% to 13% of the sheet at that step.
 - Settings that the config sets are never changed.
 
-The lobe segmentation is an input, it is not made here.
-It needs the lung lobes labelled with the TotalSegmentator ids of the `total` task (10 to 14) on the voxel grid of the masks.
+The lobes file is kept, so a second run on the same scan does not segment again.
+A segmenter other than TotalSegmentator can be passed in, it only has to follow `Segmenter`.
 The lobes are slightly off near the fissures, so the distance is wide and the band is only a rough guide.
 """
 
+from functools import partial
 from pathlib import Path
 
 import nibabel as nib
@@ -51,6 +53,12 @@ from fissure_annotation.imaging.sheet import (
     oriented_sheet,
 )
 from fissure_annotation.imaging.slices import View
+from fissure_annotation.segmentation import (
+    LUNG_LOBES,
+    Segmenter,
+    TotalSegmentatorSettings,
+    run_totalsegmentator,
+)
 from fissure_annotation.settings import ExperimentSettings
 
 VoxelMask = Bool[np.ndarray, "x y z"]
@@ -74,9 +82,10 @@ class SheetSettings(ExperimentSettings):
 
 
 class PostProcessJob(ExperimentSettings):
+    nifti: Path  # the scan the masks were made from, the lobes are segmented from it
     mask_path: Path  # the combined mask of make_fissure_mask, the mask of each view is found next to it
     views: list[View] = ["axial"]
-    lobes: Path  # lung lobes with TotalSegmentator ids, on the grid of the masks
+    lobes: Path  # where the lung lobes are saved, and read from when the file exists already
     out_dir: Path
     max_distance_mm: float = 10.0
     boundary_band_mm: float = DEFAULT_BAND_MM
@@ -84,6 +93,7 @@ class PostProcessJob(ExperimentSettings):
         default=1, ge=1
     )  # the model annotated every slice_step-th slice of each view, 2 for every other slice
     sheet: SheetSettings = SheetSettings()
+    totalsegmentator: TotalSegmentatorSettings = TotalSegmentatorSettings()
 
     @property
     def sheet_path(self) -> Path:
@@ -134,8 +144,19 @@ def distance_to_lobe_boundary_mm(lobes: nib.Nifti1Image, band_mm: float) -> np.n
     return distance_to_mask_mm(band, spacing_mm)
 
 
-def post_process_fissure_masks(job: PostProcessJob) -> Path:
-    lobes = nib.load(job.lobes)
+def segmented_lobes(job: PostProcessJob, segmenter: Segmenter) -> nib.Nifti1Image:
+    if not job.lobes.exists():
+        segmenter(job.nifti, LUNG_LOBES, job.lobes)
+    return nib.load(job.lobes)
+
+
+def post_process_fissure_masks(
+    job: PostProcessJob, segmenter: Segmenter | None = None
+) -> Path:
+    segmenter = segmenter or partial(
+        run_totalsegmentator, settings=job.totalsegmentator
+    )
+    lobes = segmented_lobes(job, segmenter)
     distance_mm = distance_to_lobe_boundary_mm(lobes, job.boundary_band_mm)
     kept_masks, removed_masks = [], []
     for view in job.views:

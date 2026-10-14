@@ -9,6 +9,7 @@ from fissure_annotation.postprocess import (
     post_process_fissure_masks,
     sheet_parameters,
 )
+from fissure_annotation.segmentation import LUNG_LOBES
 
 SIZE = 40
 BOUNDARY_X = 20  # the left upper lobe is below it and the left lower lobe from it up
@@ -49,6 +50,7 @@ def far_line():
 
 def job_for(tmp_path, views):
     return PostProcessJob(
+        nifti=tmp_path / "scan.nii.gz",
         mask_path=tmp_path / "fissures.nii.gz",
         views=views,
         lobes=tmp_path / "lobes.nii.gz",
@@ -124,8 +126,48 @@ def test_a_setting_in_the_config_is_never_changed_by_the_slice_step():
 def test_a_slice_step_below_one_is_refused(tmp_path):
     with pytest.raises(ValueError):
         PostProcessJob(
+            nifti=tmp_path / "scan.nii.gz",
             mask_path=tmp_path / "m.nii.gz",
             lobes=tmp_path / "l.nii.gz",
             out_dir=tmp_path,
             slice_step=0,
         )
+
+
+class FakeSegmenter:
+    "writes the lobes the way a segmenter would, and remembers what it was asked for"
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, scan, structures, out_path):
+        self.calls.append((scan, list(structures), out_path))
+        save(lobes_meeting_at_the_boundary(), out_path)
+        return out_path
+
+
+def test_the_lobes_are_segmented_from_the_scan_when_the_file_does_not_exist(tmp_path):
+    save(
+        ragged_plane_at_the_boundary(range(5, 35)).astype(np.uint8),
+        tmp_path / "fissures_axial.nii.gz",
+    )
+    job = job_for(tmp_path, ["axial"])
+    segmenter = FakeSegmenter()
+
+    post_process_fissure_masks(job, segmenter)
+
+    assert segmenter.calls == [(job.nifti, LUNG_LOBES, job.lobes)]
+    assert job.lobes.exists() and load(job.sheet_path).any()
+
+
+def test_existing_lobes_are_reused_and_the_segmenter_is_not_called(tmp_path):
+    save(lobes_meeting_at_the_boundary(), tmp_path / "lobes.nii.gz")
+    save(
+        ragged_plane_at_the_boundary(range(5, 35)).astype(np.uint8),
+        tmp_path / "fissures_axial.nii.gz",
+    )
+    segmenter = FakeSegmenter()
+
+    post_process_fissure_masks(job_for(tmp_path, ["axial"]), segmenter)
+
+    assert segmenter.calls == []
