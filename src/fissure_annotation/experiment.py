@@ -1,6 +1,7 @@
 """Run the waypoint agent over a range of slices of one scan, and write a contact sheet of the results.
 
 - Each slice is an independent conversation, run in parallel, one thread per slice.
+- `slice_step` above 1 runs only every slice_step-th slice of the range, so the cost drops by about that factor.
 - Everything that distinguishes one run from another (scan, slices, model) is in the YAML config.
 - Output goes under `out_dir`: points/, masks/, overlays/, logs/ and contact_sheet.png (see waypoints.RunFolder).
 """
@@ -12,6 +13,7 @@ from pathlib import Path
 import numpy as np
 from jaxtyping import UInt8
 from portkey_ai import Portkey
+from pydantic import Field
 
 from fissure_annotation.agent import AgentSettings, SliceLog, run_slice
 from fissure_annotation.imaging.overlay import contact_sheet, labelled, red_overlay
@@ -29,12 +31,16 @@ class WaypointExperiment(ExperimentSettings):
     out_dir: Path
     first_slice: int
     last_slice: int
+    slice_step: int = Field(
+        default=1, ge=1
+    )  # every slice_step-th slice from first_slice, and always last_slice so the end of the range is seen
     workers: int = 16
     agent: AgentSettings = AgentSettings()
 
     @property
     def slice_indices(self) -> list[int]:
-        return list(range(self.first_slice, self.last_slice + 1))
+        every_step = range(self.first_slice, self.last_slice + 1, self.slice_step)
+        return sorted({*every_step, self.last_slice})
 
 
 class SliceExport(ExperimentSettings):

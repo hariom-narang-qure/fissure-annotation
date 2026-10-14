@@ -193,3 +193,25 @@ def test_the_mask_of_each_view_is_saved_next_to_the_combined_mask(tmp_path):
     assert axial[10, 3, 0] == 1 and axial[10, 0, 2] == 0  # only the axial marks
     assert coronal[10, 0, 2] == 1 and coronal[10, 3, 0] == 0  # only the coronal marks
     assert (load(job.mask_path) == (axial | coronal)).all()
+
+
+def test_a_slice_step_sends_only_every_step_th_slice_and_the_last_one_to_the_model(
+    tmp_path,
+):
+    volume = np.full((512, 512, 5), LUNG_HU, dtype=np.int16)
+    volume[511 - 399 : 511 - 100 + 1, 511 - 300, :] = LINE_HU
+    nib.save(nib.Nifti1Image(volume, np.eye(4)), tmp_path / "scan.nii.gz")
+    model = CountingModel()
+    job = FissureMaskJob(
+        nifti=tmp_path / "scan.nii.gz",
+        mask_path=tmp_path / "scan_fissures.nii.gz",
+        first_slice=0,
+        last_slice=4,
+        slice_step=3,
+        workers=2,
+    )
+    make_fissure_mask(job, model)
+    mask = np.asarray(nib.load(job.mask_path).dataobj)
+    marked_slices = [z for z in range(5) if mask[:, :, z].any()]
+    assert marked_slices == [0, 3, 4]  # 0 and 3 are on the step, 4 is the last slice
+    assert model.conversations == 3
