@@ -2,7 +2,11 @@ import nibabel as nib
 import numpy as np
 import pytest
 
-from fissure_annotation.fissure_mask import FissureMaskJob, make_fissure_mask
+from fissure_annotation.fissure_mask import (
+    FissureMaskJob,
+    make_fissure_mask,
+    view_mask_path,
+)
 from test_agent import FINISH, FakeModel
 from test_experiment import ModelPerSlice
 
@@ -162,3 +166,30 @@ def test_a_slice_range_needs_a_single_view(tmp_path):
             views=["axial", "coronal"],
             first_slice=5,
         )
+
+
+def test_the_mask_of_each_view_is_saved_next_to_the_combined_mask(tmp_path):
+    nib.save(
+        nib.Nifti1Image(np.full((20, 6, 5), LUNG_HU, dtype=np.int16), np.eye(4)),
+        tmp_path / "scan.nii.gz",
+    )
+    job = FissureMaskJob(
+        nifti=tmp_path / "scan.nii.gz",
+        mask_path=tmp_path / "both.nii.gz",
+        views=["axial", "coronal"],
+        workers=1,
+    )
+    make_fissure_mask(job, LineOnEverySliceModel())
+
+    def load(path):
+        return np.asarray(nib.load(path).dataobj)
+
+    axial_path = view_mask_path(job.mask_path, "axial")
+    axial, coronal = (
+        load(axial_path),
+        load(view_mask_path(job.mask_path, "coronal")),
+    )
+    assert axial_path == tmp_path / "both_axial.nii.gz"
+    assert axial[10, 3, 0] == 1 and axial[10, 0, 2] == 0  # only the axial marks
+    assert coronal[10, 0, 2] == 1 and coronal[10, 3, 0] == 0  # only the coronal marks
+    assert (load(job.mask_path) == (axial | coronal)).all()
