@@ -9,10 +9,12 @@ from fissure_annotation.postprocess import (
     post_process_fissure_masks,
     sheet_parameters,
 )
+from fissure_annotation.segmentation import LUNG_LOBES
 
 SIZE = 40
 BOUNDARY_X = 20  # the left upper lobe is below it and the left lower lobe from it up
-FAR_X = 2  # 16 mm from the boundary band, which reaches x=18
+FAR_X = 2  # 8 mm outside the lungs, which start at x=10, and the margin is 5 mm
+INSIDE_FAR_X = 12  # inside the lungs, 8 mm from the lobe boundary
 
 
 def save(volume, path, affine=np.eye(4)):
@@ -24,9 +26,10 @@ def load(path):
 
 
 def lobes_meeting_at_the_boundary():
+    "the lungs are the slab from x=10 to x=30, with the upper lobe below the boundary and the lower lobe above it"
     lobes = np.zeros((SIZE, SIZE, SIZE), dtype=np.uint8)
-    lobes[:BOUNDARY_X] = LEFT_UPPER
-    lobes[BOUNDARY_X:] = LEFT_LOWER
+    lobes[10:BOUNDARY_X] = LEFT_UPPER
+    lobes[BOUNDARY_X:30] = LEFT_LOWER
     return lobes
 
 
@@ -49,6 +52,7 @@ def far_line():
 
 def job_for(tmp_path, views):
     return PostProcessJob(
+        nifti=tmp_path / "scan.nii.gz",
         mask_path=tmp_path / "fissures.nii.gz",
         views=views,
         lobes=tmp_path / "lobes.nii.gz",
@@ -56,7 +60,7 @@ def job_for(tmp_path, views):
     )
 
 
-def test_a_line_far_from_the_lobes_is_removed_and_the_rest_becomes_a_sheet(tmp_path):
+def test_a_line_outside_the_lungs_is_removed_and_the_rest_becomes_a_sheet(tmp_path):
     save(lobes_meeting_at_the_boundary(), tmp_path / "lobes.nii.gz")
     plane = ragged_plane_at_the_boundary(range(5, 35))
     save((plane | far_line()).astype(np.uint8), tmp_path / "fissures_axial.nii.gz")
@@ -124,8 +128,88 @@ def test_a_setting_in_the_config_is_never_changed_by_the_slice_step():
 def test_a_slice_step_below_one_is_refused(tmp_path):
     with pytest.raises(ValueError):
         PostProcessJob(
+            nifti=tmp_path / "scan.nii.gz",
             mask_path=tmp_path / "m.nii.gz",
             lobes=tmp_path / "l.nii.gz",
             out_dir=tmp_path,
             slice_step=0,
         )
+
+
+class FakeSegmenter:
+    "writes the lobes the way a segmenter would, and remembers what it was asked for"
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, scan, structures, out_path):
+        self.calls.append((scan, list(structures), out_path))
+        save(lobes_meeting_at_the_boundary(), out_path)
+        return out_path
+
+
+def test_the_lobes_are_segmented_from_the_scan_when_the_file_does_not_exist(tmp_path):
+    save(
+        ragged_plane_at_the_boundary(range(5, 35)).astype(np.uint8),
+        tmp_path / "fissures_axial.nii.gz",
+    )
+    job = job_for(tmp_path, ["axial"])
+    segmenter = FakeSegmenter()
+
+    post_process_fissure_masks(job, segmenter)
+
+    assert segmenter.calls == [(job.nifti, LUNG_LOBES, job.lobes)]
+    assert job.lobes.exists() and load(job.sheet_path).any()
+
+
+def test_existing_lobes_are_reused_and_the_segmenter_is_not_called(tmp_path):
+    save(lobes_meeting_at_the_boundary(), tmp_path / "lobes.nii.gz")
+    save(
+        ragged_plane_at_the_boundary(range(5, 35)).astype(np.uint8),
+        tmp_path / "fissures_axial.nii.gz",
+    )
+    segmenter = FakeSegmenter()
+
+    post_process_fissure_masks(job_for(tmp_path, ["axial"]), segmenter)
+
+    assert segmenter.calls == []
+
+
+def test_small_pieces_of_the_sheet_are_dropped_and_saved_separately(tmp_path):
+    save(lobes_meeting_at_the_boundary(), tmp_path / "lobes.nii.gz")
+    save(
+        ragged_plane_at_the_boundary(range(5, 35)).astype(np.uint8),
+        tmp_path / "fissures_axial.nii.gz",
+    )
+    everything = job_for(tmp_path, ["axial"]).model_copy(update={"min_piece_voxels": 0})
+    post_process_fissure_masks(everything, FakeSegmenter())
+    whole_sheet = load(everything.sheet_path)
+
+    nothing_big_enough = everything.model_copy(
+        update={"min_piece_voxels": int(whole_sheet.sum()) + 1}
+    )
+    post_process_fissure_masks(nothing_big_enough, FakeSegmenter())
+
+    assert not load(nothing_big_enough.sheet_path).any()
+    assert (load(nothing_big_enough.removed_pieces_path) == whole_sheet).all()
+
+
+def test_a_line_inside_the_lungs_is_kept_however_far_it_is_from_the_lobe_boundary(
+    tmp_path,
+):
+    "the lobe boundary is off in severe emphysema, so only the lungs decide"
+    save(lobes_meeting_at_the_boundary(), tmp_path / "lobes.nii.gz")
+    inside = np.zeros((SIZE, SIZE, SIZE), dtype=bool)
+    inside[INSIDE_FAR_X, 20, 5:35] = True
+    save(
+        (ragged_plane_at_the_boundary(range(5, 35)) | inside | far_line()).astype(
+            np.uint8
+        ),
+        tmp_path / "fissures_axial.nii.gz",
+    )
+    job = job_for(tmp_path, ["axial"])
+
+    post_process_fissure_masks(job, FakeSegmenter())
+
+    removed = load(job.removed_lines_path)
+    assert removed[FAR_X, 20, 5:35].all() and not removed[INSIDE_FAR_X].any()

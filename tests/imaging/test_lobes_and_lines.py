@@ -1,6 +1,6 @@
 import numpy as np
 
-from fissure_annotation.imaging.lines import keep_lines_near
+from fissure_annotation.imaging.lines import keep_lines_mostly_inside, keep_lines_near
 from fissure_annotation.imaging.lobes import (
     LEFT_LOWER,
     LEFT_UPPER,
@@ -102,3 +102,24 @@ def test_kept_and_removed_split_the_mask_without_overlap():
     mask[40:45, 4, 4] = True
     kept, removed = keep_lines_near(mask, distance, max_distance_mm=3.0)
     assert (kept | removed == mask).all() and not (kept & removed).any()
+
+
+def test_a_line_mostly_inside_the_region_is_kept_and_a_line_outside_is_removed():
+    region = np.zeros((40, 12, 12), dtype=bool)
+    region[:20] = True
+    mask = np.zeros(region.shape, dtype=bool)
+    mask[2:18, 1, 1] = True  # inside
+    mask[25:38, 5, 5] = True  # outside
+    mask[10:30, 9, 9] = True  # exactly half of its voxels are inside
+    kept, removed = keep_lines_mostly_inside(mask, region, min_share=0.5)
+    assert kept[2:18, 1, 1].all() and not kept[25:38, 5, 5].any()
+    assert kept[10:30, 9, 9].all() and removed[25:38, 5, 5].all()
+
+
+def test_a_line_with_a_short_tail_outside_the_region_is_kept_whole():
+    region = np.zeros((60, 6, 6), dtype=bool)
+    region[:40] = True
+    mask = np.zeros(region.shape, dtype=bool)
+    mask[2:50, 2, 2] = True  # 38 of 48 voxels inside, the tail goes beyond the region
+    kept, removed = keep_lines_mostly_inside(mask, region, min_share=0.5)
+    assert (kept == mask).all() and not removed.any()

@@ -7,12 +7,16 @@ Why:
 - Each view is blind to some fissures, so the views are blended after cleaning and not before.
 
 How:
-1. A band around the lobe interfaces is made from a lung lobe segmentation (`imaging/lobes.py`).
+0. The lung lobes are segmented from the scan (`segmentation.py`), unless the lobes file exists already.
+1. The lungs are the union of the lobes, and a region is made of them with a margin of `lung_margin_mm`.
 2. The lines of each view are judged on their own (`imaging/lines.py`).
-   - A line with no point within `max_distance_mm` of the band is removed, any other line is kept whole.
+   - A line with less than `min_share_inside` of its voxels in the region is removed, any other line is kept whole.
+   - Those are the outline of the body and the table, which a few views trace.
    - Removed lines of all views are saved as one mask, so they can be checked.
 3. The kept masks are OR-ed into one mask.
 4. The union is blurred along the sheet and thinned to one voxel (`imaging/sheet.py`).
+5. Pieces of the sheet under `min_piece_voxels` are dropped and saved as `removed_pieces.nii.gz`.
+   - They are stubs and specks left over from lines that only one view traced, and a fissure is a large surface.
 
 Annotating every `slice_step`-th slice cuts the cost of the model by about that factor.
 - Fewer slices give less density on a sheet and longer holes between the lines.
@@ -24,11 +28,15 @@ Annotating every `slice_step`-th slice cuts the cost of the model by about that 
   - The settings of the full run lost 11% to 13% of the sheet at that step.
 - Settings that the config sets are never changed.
 
-The lobe segmentation is an input, it is not made here.
-It needs the lung lobes labelled with the TotalSegmentator ids of the `total` task (10 to 14) on the voxel grid of the masks.
-The lobes are slightly off near the fissures, so the distance is wide and the band is only a rough guide.
+The lobes file is kept, so a second run on the same scan does not segment again.
+A segmenter other than TotalSegmentator can be passed in, it only has to follow `Segmenter`.
+Lines are judged by the lungs and not by the lobe interfaces, which an earlier version used.
+- The interfaces of the segmentation are off in severe emphysema.
+  - A real left oblique fissure was 18 mm from its interface, and the old rule removed it.
+- On the other scans the interface rule removed the same outlines of the body and little else, since the later filters drop lone short lines anyway.
 """
 
+from functools import partial
 from pathlib import Path
 
 import nibabel as nib
@@ -37,12 +45,11 @@ from jaxtyping import Bool
 from pydantic import Field
 
 from fissure_annotation.fissure_mask import view_mask_path
-from fissure_annotation.imaging.lines import keep_lines_near
-from fissure_annotation.imaging.lobes import (
-    DEFAULT_BAND_MM,
-    distance_to_mask_mm,
-    lobe_boundary_band,
+from fissure_annotation.imaging.lines import (
+    keep_large_pieces,
+    keep_lines_mostly_inside,
 )
+from fissure_annotation.imaging.lobes import distance_to_mask_mm
 from fissure_annotation.imaging.sheet import (
     DEFAULT_MIN_STRENGTH,
     DEFAULT_SIGMA_ACROSS_VOXELS,
@@ -51,6 +58,12 @@ from fissure_annotation.imaging.sheet import (
     oriented_sheet,
 )
 from fissure_annotation.imaging.slices import View
+from fissure_annotation.segmentation import (
+    LUNG_LOBES,
+    Segmenter,
+    TotalSegmentatorSettings,
+    run_totalsegmentator,
+)
 from fissure_annotation.settings import ExperimentSettings
 
 VoxelMask = Bool[np.ndarray, "x y z"]
@@ -74,16 +87,23 @@ class SheetSettings(ExperimentSettings):
 
 
 class PostProcessJob(ExperimentSettings):
+    nifti: Path  # the scan the masks were made from, the lobes are segmented from it
     mask_path: Path  # the combined mask of make_fissure_mask, the mask of each view is found next to it
     views: list[View] = ["axial"]
-    lobes: Path  # lung lobes with TotalSegmentator ids, on the grid of the masks
+    lobes: Path  # where the lung lobes are saved, and read from when the file exists already
     out_dir: Path
-    max_distance_mm: float = 10.0
-    boundary_band_mm: float = DEFAULT_BAND_MM
+    lung_margin_mm: float = 5.0  # the lungs as the segmentation has them are a little tight, and the bases are not exact
+    min_share_inside: float = Field(
+        default=0.5, ge=0, le=1
+    )  # a line with less than this share of its voxels near the lungs is removed
     slice_step: int = Field(
         default=1, ge=1
     )  # the model annotated every slice_step-th slice of each view, 2 for every other slice
+    min_piece_voxels: int = Field(
+        default=150, ge=0
+    )  # pieces of the final sheet under this size are dropped, 0 keeps all of them
     sheet: SheetSettings = SheetSettings()
+    totalsegmentator: TotalSegmentatorSettings = TotalSegmentatorSettings()
 
     @property
     def sheet_path(self) -> Path:
@@ -92,6 +112,10 @@ class PostProcessJob(ExperimentSettings):
     @property
     def removed_lines_path(self) -> Path:
         return self.out_dir / "removed_lines.nii.gz"
+
+    @property
+    def removed_pieces_path(self) -> Path:
+        return self.out_dir / "removed_pieces.nii.gz"
 
 
 def sheet_parameters(settings: SheetSettings, slice_step: int) -> dict[str, float]:
@@ -128,27 +152,40 @@ def require_same_grid(
         raise ValueError(f"{name} is not on the voxel grid of the lobes")
 
 
-def distance_to_lobe_boundary_mm(lobes: nib.Nifti1Image, band_mm: float) -> np.ndarray:
+def near_the_lungs(lobes: nib.Nifti1Image, margin_mm: float) -> VoxelMask:
     spacing_mm = tuple(float(s) for s in lobes.header.get_zooms()[:3])
-    band = lobe_boundary_band(np.asarray(lobes.dataobj), spacing_mm, band_mm)
-    return distance_to_mask_mm(band, spacing_mm)
+    lungs = np.asarray(lobes.dataobj) > 0
+    return distance_to_mask_mm(lungs, spacing_mm) <= margin_mm
 
 
-def post_process_fissure_masks(job: PostProcessJob) -> Path:
-    lobes = nib.load(job.lobes)
-    distance_mm = distance_to_lobe_boundary_mm(lobes, job.boundary_band_mm)
+def segmented_lobes(job: PostProcessJob, segmenter: Segmenter) -> nib.Nifti1Image:
+    if not job.lobes.exists():
+        segmenter(job.nifti, LUNG_LOBES, job.lobes)
+    return nib.load(job.lobes)
+
+
+def post_process_fissure_masks(
+    job: PostProcessJob, segmenter: Segmenter | None = None
+) -> Path:
+    segmenter = segmenter or partial(
+        run_totalsegmentator, settings=job.totalsegmentator
+    )
+    lobes = segmented_lobes(job, segmenter)
+    near_lungs = near_the_lungs(lobes, job.lung_margin_mm)
     kept_masks, removed_masks = [], []
     for view in job.views:
         path = view_mask_path(job.mask_path, view)
         mask, image = read_mask(path)
         require_same_grid(lobes, image, path.name)
-        kept, removed = keep_lines_near(mask, distance_mm, job.max_distance_mm)
+        kept, removed = keep_lines_mostly_inside(mask, near_lungs, job.min_share_inside)
         kept_masks.append(kept)
         removed_masks.append(removed)
     sheet = oriented_sheet(
         np.logical_or.reduce(kept_masks),
         **sheet_parameters(job.sheet, job.slice_step),
     )
+    sheet, small_pieces = keep_large_pieces(sheet, job.min_piece_voxels)
     write_mask_like(np.logical_or.reduce(removed_masks), image, job.removed_lines_path)
+    write_mask_like(small_pieces, image, job.removed_pieces_path)
     write_mask_like(sheet, image, job.sheet_path)
     return job.sheet_path

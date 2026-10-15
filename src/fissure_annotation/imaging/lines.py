@@ -13,6 +13,13 @@ How:
 - A line is a 26-connected component of the mask.
 - The distance of a line is the smallest distance from any of its voxels to the reference, in millimetres.
 - A line within `max_distance_mm` is kept whole, any other line is removed whole.
+
+`keep_lines_mostly_inside` is the rule that does not depend on where the lobe interfaces are.
+- It judges a line by the share of its voxels inside a region, such as the lungs with a margin.
+- A line that is mostly outside the lungs is the outline of the body or the table, which is the part of the nearest point rule that matters most.
+- It does not need the lobe segmentation to be right inside the lungs, which it is not in severe emphysema.
+
+`keep_large_pieces` is the plain size rule for what other filters leave behind, a few specks or short stubs.
 """
 
 import numpy as np
@@ -40,4 +47,26 @@ def keep_lines_near(
     lines, nearest = nearest_distance_per_line(mask, distance_mm)
     kept_line_numbers = np.flatnonzero(nearest <= max_distance_mm) + 1
     kept = np.isin(lines, kept_line_numbers)
+    return kept, mask & ~kept
+
+
+def keep_large_pieces(
+    mask: Bool[np.ndarray, "x y z"], min_voxels: int
+) -> tuple[Bool[np.ndarray, "x y z"], Bool[np.ndarray, "x y z"]]:
+    "the 26-connected pieces of at least min_voxels voxels, and the smaller ones"
+    pieces, count = ndimage.label(mask, CONNECT_26)
+    sizes = np.bincount(pieces.ravel(), minlength=count + 1)
+    kept = np.isin(pieces, np.flatnonzero(sizes[1:] >= min_voxels) + 1)
+    return kept, mask & ~kept
+
+
+def keep_lines_mostly_inside(
+    mask: Bool[np.ndarray, "x y z"],
+    region: Bool[np.ndarray, "x y z"],
+    min_share: float,
+) -> tuple[Bool[np.ndarray, "x y z"], Bool[np.ndarray, "x y z"]]:
+    "the lines with at least min_share of their voxels inside the region, and the other lines"
+    lines, count = ndimage.label(mask, CONNECT_26)
+    share = ndimage.mean(region, lines, index=np.arange(1, count + 1))
+    kept = np.isin(lines, np.flatnonzero(np.asarray(share) >= min_share) + 1)
     return kept, mask & ~kept
