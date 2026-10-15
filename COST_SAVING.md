@@ -51,6 +51,20 @@
   - Both drop mostly the same empty slices at the ends of the lung.
   - The combined saving was not measured.
 
+### Slices saved against cost saved
+
+| rule | scan | slices dropped | list cost saved |
+|---|---|---|---|
+| anatomical ranges | `case1` | 8% (26 of 318) | 2.1% |
+| anatomical ranges | `case2` | 10% (31 of 300) | 2.3% |
+| lobe interface, within 3 slices | `case1` | 14% | 3.6% |
+| lobe interface, within 3 slices | `case2` | 11% | 3.2% |
+
+- A dropped slice saves about a quarter of the average slice cost.
+  - The dropped slices are mostly empty, at about 5,000 tokens against 23,600 for a slice with a fissure.
+- The lobe segmentation is not reliable, so the interface rule is not pursued further.
+  - The anatomical ranges are the version to use, at about 2% of the cost.
+
 ### Why the saving is small
 - The dropped slices are the cheap ones, with no fissure.
 - Dropping every empty slice perfectly would save at most 13% of the cost.
