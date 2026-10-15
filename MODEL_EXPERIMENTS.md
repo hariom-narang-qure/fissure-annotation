@@ -134,6 +134,49 @@ The token estimate multiplies the logged tokens by the list prices above.
 - **`gemma-4-26b-a4b-it`, `gemma-4-31b-it`** were callable with text only and never run on slices.
   - They are on the OpenRouter route, so they would need the same wrapper as Gemini.
 
+## How `gpt-6.1-sol` zooms
+This is what the agent actually does, as a basis for a cheaper design with fewer turns or fixed crops.
+It comes from the logs of the two full step-3 runs: 618 slices and 1,794 zoom calls.
+The script is `work/zoom_analysis.py`, which is gitignored.
+
+- Every slice starts with a zoom.
+  - None finished from the overview image alone.
+  - The model zooms 2.9 times per slice: axial 3.5, coronal 3.4, sagittal 2.1.
+  - Slices with a trace zoom more, 4.2, 3.8 and 2.3, than slices without one, 2.4, 2.9 and 1.8.
+- The zooms are small and magnified.
+  - Scale 3 in 43% of calls, scale 5 in 24%, scale 6 in 22%, scale 4 in 11%.
+  - The median box is 145 x 140 px, with 10th to 90th percentile 94 x 60 to 264 x 240 px.
+  - A box covers a median 9% of the slice, and the crop it returns is a median 605 px wide.
+- It works from coarse to fine.
+  - Turn 0: 781 zooms, median box 189 x 200 px at scale 3, about one lung or the whole lung region.
+  - Turn 1: 648 zooms, median box 127 x 100 px at scale 5.
+  - Turn 2: 282 zooms, 120 x 90 px.
+  - Turn 3 and later: 83 zooms, smaller still at scale 6.
+- The first turn is one zoom in 74% of slices and two in 26%.
+  - With two, one is on each side of the midline, and together they cover a median 99% of the lung box.
+- The model only places waypoints where it has zoomed.
+  - All 2,513 final waypoints lie inside at least one zoom box.
+  - It reads coordinates off the tick labels of the crops, so the fine zoom is what gives the precision.
+- Many slices end without a trace.
+  - The three most common sequences are 1, 2 or 3 zooms and then finish with no trace, which is 198 slices, 32%.
+  - Traced slices call `trace_points` two or three times, a first trace and then fixes.
+
+**What this means for a cheaper design:**
+- Fixed crops can replace the first turn: two lung half crops at scale 3, plus the whole slice.
+- Fine zooms are about 125 x 100 px at scale 5 or 6, around a candidate fissure.
+  - Covering the lung box of a slice with 130 x 110 px tiles takes a median 6 to 9 tiles, up to 12.
+  - That is a lot of images for one request, so a two stage design fits better: a coarse pass proposes candidates, then fine crops go around them.
+- Tiles should cover the lung region from the lung mask, which is reliable.
+  - They should not be placed only around the lobe interface.
+
+**How far the model's waypoints are from the lobe interface** (distance to the interface band from TotalSegmentator):
+- Normal study `…663064`: median 0.7 mm, 16% of 995 waypoints more than 10 mm away.
+- Severe emphysema `…270947`: median 0.0 mm, 6% of 1,518 waypoints more than 10 mm away.
+- So the interface agrees with most of what the model traced in both scans, and the mismatch is local.
+  - These numbers measure agreement with the model, not truth.
+  - The emphysema scan had a real left oblique fissure 18 mm from its interface.
+- A prior from the lobe interface alone would miss such parts, so it can narrow the search but cannot replace the image.
+
 ## Other agent step experiments on the same probe
 - A window whose upper bound follows the scan's median lung density, and a prompt hint that bulla walls are not fissures.
 - Neither was distinguishable from the run to run noise, so the agent step is unchanged.
