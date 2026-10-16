@@ -122,3 +122,21 @@ def test_the_conversation_stops_at_the_step_limit(slices_dir, tmp_path):
         *[[("zoom", {"x0": 0, "y0": 0, "x1": 50, "y1": 50, "scale": 2})]] * 5
     )
     assert run(model, slices_dir, tmp_path, max_steps=3).steps == 3
+
+
+class FlakyModel(FakeModel):
+    "fails the first request with a 503, like a provider connection timeout"
+
+    def create(self, **request):
+        if not getattr(self, "failed", False):
+            self.failed = True
+            error = Exception("upstream connect error")
+            error.status_code = 503
+            raise error
+        return super().create(**request)
+
+
+def test_a_transient_provider_error_is_retried_and_the_slice_finishes(slices_dir, tmp_path):
+    model = FlakyModel([TRACE], [FINISH])
+    log = run(model, slices_dir, tmp_path, retry_wait_seconds=0.0)
+    assert log.summary == "one fissure" and log.traces == 1

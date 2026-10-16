@@ -21,6 +21,7 @@ from fissure_annotation.imaging.png import read_gray, save_png
 from fissure_annotation.imaging.slices import View, slice_file_name
 from fissure_annotation.imaging.ticks import Box, crop_with_ticks
 from fissure_annotation.imaging.tracing import trace_mask
+from fissure_annotation.retry import with_retries
 from fissure_annotation.settings import ExperimentSettings
 from fissure_annotation.tools import TOOLS
 from fissure_annotation.waypoints import Fissure, RunFolder, SliceWaypoints
@@ -44,6 +45,8 @@ class AgentSettings(ExperimentSettings):
     max_output_tokens: int = 24000
     max_steps: int = 14
     max_traces: int = 3
+    retries: int = 6  # a transient provider error (408, 429, 5xx, a lost connection) is retried this often, see retry.py
+    retry_wait_seconds: float = 2.0  # the first wait, which doubles on each retry
     view: View = "axial"
     overlay_box: Box = (
         40,
@@ -157,6 +160,14 @@ def request_settings(settings: AgentSettings) -> dict:
     )
 
 
+def create_response(client, settings: AgentSettings, **request):
+    return with_retries(
+        lambda: client.responses.create(**request_settings(settings), **request),
+        settings.retries,
+        settings.retry_wait_seconds,
+    )
+
+
 def first_input(session: SliceSession) -> list[dict]:
     height, width = session.image.shape
     description = f"{session.settings.view.capitalize()} slice {session.slice_index}, {width}x{height} px."
@@ -185,9 +196,7 @@ def run_slice(
         output_tokens=0,
         calls=[],
     )
-    response = client.responses.create(
-        **request_settings(settings), input=first_input(session)
-    )
+    response = create_response(client, settings, input=first_input(session))
     for step in range(settings.max_steps):
         log.steps = step + 1
         log.input_tokens += response.usage.input_tokens
@@ -212,10 +221,8 @@ def run_slice(
             )
         if log.summary is not None:
             break
-        response = client.responses.create(
-            **request_settings(settings),
-            previous_response_id=response.id,
-            input=outputs,
+        response = create_response(
+            client, settings, previous_response_id=response.id, input=outputs
         )
     log.traces = session.traces
     folder.log_path(session.slice_png).parent.mkdir(parents=True, exist_ok=True)
