@@ -39,8 +39,3 @@ These apply to code, docs, READMEs, PRs and commits.
   - `imaging/` is the bottom layer: it handles pixels and nothing else, and imports nothing from the rest of the package.
   - A test in `tests/test_layering.py` enforces it.
 - Tests live in `tests/`. A behaviour-preserving refactor needs a test that pins the behaviour first.
-
-# Salvo / Lucid
-
-- Use `$SALVO_BUCKET_PREFIX` for any S3 upload or bundle URI.
-- If it is unset, stop and ask. Never assume a default prefix.
