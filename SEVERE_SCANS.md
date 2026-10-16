@@ -16,6 +16,16 @@
   - `smoke.py`, `prepare.py`, `render_sweep.py`, `compare.py`, and the prompt variants in `prompts/`.
 - The sol spend for the iteration was $7.92 billed.
 
+## Conclusion
+- Keep the resampling of thick-slice scans.
+  - It changes what the model sees, and the effect is large and one-sided.
+- Do not adopt prompt v1 or v2.
+  - The user reviewed the side-by-side slices and found them too noisy to show an effect.
+  - Each version ran once, on 7 to 22 slices picked because they had failed.
+  - Two runs of the same prompt already disagree on 5% to 14% of the lines.
+  - The judge was a model reading images, not a radiologist.
+- A prompt change would need repeated runs on a larger, unpicked set of slices before it can be judged.
+
 ## Finding 1: thick slices squashed the coronal and sagittal views
 - Slices of coronal and sagittal views are cut on the voxel grid.
   - On a scan with 3 mm slices and 0.8 mm pixels, the lungs were squashed 3.7 times vertically.
