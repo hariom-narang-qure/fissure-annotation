@@ -1,0 +1,11 @@
+# The series of minimal_scan_list.csv, the agent on every 4th slice of all three views, then post-processing.
+csv: minimal_scan_list.csv
+scans_dir: /realdata/hariom.narang/qmuse/data/scans
+out_root: work/scan_list_step4
+slice_step: 4
+views: [axial, coronal, sagittal]
+workers: 16
+# The lung lobes are segmented with TotalSegmentator, from the environment it was installed in.
+totalsegmentator:
+  command: [/home/hariom.narang/fissure-work-bak/1.2.392.200036.9116.2.6.1.54365.1690017023.1783390643.994211/fusion/tools/ts_venv/bin/python, -m, totalsegmentator.bin.TotalSegmentator]
+  gpu_index: 0
