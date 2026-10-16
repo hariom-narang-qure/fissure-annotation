@@ -115,7 +115,10 @@
 - The collapse scan's sheet grew from 6,396 voxels (squashed, before the resampling) to 30,181.
 - The pneumothorax and ground-glass sheets are small (1,983 and 2,438 voxels), since little aerated lung is left.
 - Upload to Lucid (`configs/lucid_upload_severe_flex.yaml`, series id suffix `.flex_step4`):
-  - Five cases imported with both masks, and two more with the sheet only.
-  - Three scans (lobectomy, spiculated mass, honeycombing) never imported.
-    - Lucid's ingest service timed out on every try (`ReadTimeout`), one case at a time, split into one mask per case, and under fresh ids.
-    - The timeout is inside the service and needs its owners.
+  - All ten scans are on Lucid with their sheet and their lines.
+  - Lucid's ingest service often timed out (`ReadTimeout`), even with one case at a time.
+    - It stores the whole CT series in Orthanc in one request with a 30 s timeout (`orthanc.py`, `store_instances`).
+    - Four scans got through only after the scan and masks were cropped to the lungs plus 15 voxels (`.crop` suffix).
+      - The crop is exact, every sheet voxel is kept at its world position.
+    - The emphysema lines mask needed a retry 10 minutes later, so the failures depend on the service's load.
+  - The failed attempts stay in the project as failed rows, since the CLI cannot delete cases.
