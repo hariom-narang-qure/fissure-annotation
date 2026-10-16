@@ -87,3 +87,34 @@ def test_a_bundle_that_was_not_dispatched_is_an_error():
 def test_import_statuses_are_counted():
     output = json.dumps([{"import_status": "ready"}, {"import_status": "ready"}, {"import_status": "failed"}])
     assert import_statuses(output) == {"ready": 2, "failed": 1}
+
+
+def test_a_series_suffix_makes_its_own_case_and_folder(tmp_path, monkeypatch):
+    monkeypatch.setenv("SALVO_BUCKET_PREFIX", "me")
+    job = job_for(tmp_path, series_suffix=".flex4")
+    series = bundle_series(job, "a")
+    assert series.series_id == "a.flex4"
+    assert series.scan == "s3://qmuse-annotation/me/proj/a.flex4/scan.nii.gz"
+    finish_scan(tmp_path, "a")
+    stage_series(job, "a")
+    assert (lucid_upload.stage_dir(job) / "a.flex4" / "scan.nii.gz").exists()
+
+
+def test_each_series_is_submitted_on_its_own_and_waited_for(tmp_path, monkeypatch):
+    monkeypatch.setenv("SALVO_BUCKET_PREFIX", "me")
+    commands = []
+
+    def fake_run(command):
+        commands.append(command)
+        if command[:3] == ["salvo-client", "project", "submit-bundle"]:
+            return json.dumps({"dispatch_error": None})
+        if command[:3] == ["salvo-client", "project", "wait"]:
+            return json.dumps([{"import_status": "ready"}])
+        return "{}"
+
+    monkeypatch.setattr(lucid_upload, "run", fake_run)
+    finish_scan(tmp_path, "a")
+    finish_scan(tmp_path, "b")
+    upload_to_lucid(job_for(tmp_path))
+    salvo_steps = [c[2] for c in commands if c[0] == "salvo-client"]
+    assert salvo_steps == ["create", "submit-bundle", "wait", "submit-bundle", "wait"]

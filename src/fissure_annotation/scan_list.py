@@ -17,8 +17,9 @@ How:
    - A run that stopped halfway is finished by running it again, since the agent skips slices that have a log.
    - A scan that raised an error, or was skipped, is recorded in its `status.json` and the list goes on.
 
-The agent costs about the same per slice, so `estimated_cost_usd` is the number of slices times a billed price per slice.
-That price was measured on full runs of gpt-6.1-sol at a step of 3 (see COST_SAVING.md), so it is a rough check before a run.
+The agent costs about the same per slice, so `estimated_cost_usd` is the number of slices times a price per slice.
+- The price is Portkey's estimate for gpt-6.1-sol, from two full runs at step 4 on 2026-10-16 ($7.90 for 632 slices).
+- It is not an invoice, and it does not know the flex discount, so it is a rough check before a run.
 """
 
 import csv
@@ -47,7 +48,7 @@ from fissure_annotation.postprocess import (
 from fissure_annotation.segmentation import TotalSegmentatorSettings
 from fissure_annotation.settings import ExperimentSettings
 
-BILLED_USD_PER_SLICE = (0.022, 0.026)
+ESTIMATED_USD_PER_SLICE = (0.011, 0.015)
 
 
 class ScanListJob(ExperimentSettings):
@@ -182,7 +183,7 @@ def slices_to_annotate(shape: tuple[int, int, int], views: list[View], step: int
 
 
 def estimated_cost_usd(slice_count: int) -> tuple[float, float]:
-    low, high = BILLED_USD_PER_SLICE
+    low, high = ESTIMATED_USD_PER_SLICE
     return slice_count * low, slice_count * high
 
 
@@ -284,6 +285,6 @@ def plan_lines(job: ScanListJob) -> list[str]:
             total_slices += planned_slices(job, uid)
     low, high = estimated_cost_usd(total_slices)
     lines.append(
-        f"total {total_slices} slices, about ${low:.0f} to ${high:.0f} billed"
+        f"total {total_slices} slices, about ${low:.0f} to ${high:.0f} as Portkey estimates it"
     )
     return lines

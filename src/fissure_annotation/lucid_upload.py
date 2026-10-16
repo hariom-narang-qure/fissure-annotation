@@ -10,7 +10,10 @@ How:
 3. `aws s3 sync` copies the staging folder to `s3://<bucket>/<$SALVO_BUCKET_PREFIX>/<project slug>/`.
    - A file that is there already with the same size is not sent again, so a second run finishes a partial upload.
 4. A `bundle.json` lists, for each series, the S3 scan and one mask finding per name, in the format of `salvo-client`.
-5. The project is created (it is not created again when it exists), the bundle submitted, and the import waited for.
+5. The project is created (it is not created again when it exists).
+6. The series are submitted one at a time, and each import is waited for before the next.
+   - Submitting 13 cases at once made the ingest service time out on 7 of them (ReadTimeout).
+   - A new case is pending as soon as it is submitted, so `project wait` covers it.
 
 Each finding is a mask with a path, so it shows as an overlay in the viewer.
 The viewer did not draw the first of two overlapping masks that shared a case, so give one finding per case when the masks overlap.
@@ -43,6 +46,7 @@ class LucidUploadJob(ExperimentSettings):
     findings: dict[str, str] = {
         "fissure_sheet": "post/sheet.nii.gz"
     }  # the name in the viewer, and the file inside the folder of the scan
+    series_suffix: str = ""  # added to each series id, so a second upload of a scan becomes its own case and does not merge into an earlier one
     wait_timeout_seconds: int = 600
     limit: int | None = None
     dry_run: bool = False  # stage and list what would be sent, and call neither S3 nor Lucid
@@ -105,17 +109,21 @@ def link(target: Path, link_path: Path) -> None:
     link_path.symlink_to(target.resolve())
 
 
+def series_id(job: LucidUploadJob, uid: str) -> str:
+    return uid + job.series_suffix
+
+
 def stage_series(job: LucidUploadJob, uid: str) -> None:
-    folder = stage_dir(job) / uid
+    folder = stage_dir(job) / series_id(job, uid)
     link(scan_file(job, uid), folder / SCAN_NAME)
     for name, path in finding_files(job, uid).items():
         link(path, folder / f"{name}.nii.gz")
 
 
 def bundle_series(job: LucidUploadJob, uid: str) -> BundleSeries:
-    root = f"{s3_root(job)}/{uid}"
+    root = f"{s3_root(job)}/{series_id(job, uid)}"
     return BundleSeries(
-        series_id=uid,
+        series_id=series_id(job, uid),
         scan=f"{root}/{SCAN_NAME}",
         annotations=[
             Annotation(name=name, path=f"{root}/{name}.nii.gz")
@@ -174,8 +182,14 @@ def upload_to_lucid(job: LucidUploadJob) -> list[str]:
     print(sync_to_s3(job))
     if not job.dry_run:
         salvo("project", "create", job.project_slug, job.project_name)
-        require_dispatched(
-            salvo("project", "submit-bundle", job.project_slug, str(bundle_path))
-        )
-        print(import_statuses(wait_for_import(job)))
+        for series in bundle.series:
+            print(series.series_id, submit_and_wait(job, series), flush=True)
     return [uid for uid in uids if uid not in ready]
+
+
+def submit_and_wait(job: LucidUploadJob, series: BundleSeries) -> dict[str, int]:
+    "returns the import statuses of the whole project once nothing is pending"
+    path = job.out_root / "lucid_bundle_one.json"
+    path.write_text(Bundle(series=[series]).model_dump_json(indent=2))
+    require_dispatched(salvo("project", "submit-bundle", job.project_slug, str(path)))
+    return import_statuses(wait_for_import(job))
