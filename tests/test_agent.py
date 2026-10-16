@@ -140,3 +140,11 @@ def test_a_transient_provider_error_is_retried_and_the_slice_finishes(slices_dir
     model = FlakyModel([TRACE], [FINISH])
     log = run(model, slices_dir, tmp_path, retry_wait_seconds=0.0)
     assert log.summary == "one fissure" and log.traces == 1
+
+
+def test_the_service_tier_is_sent_only_when_it_is_set(slices_dir, tmp_path):
+    default, flex = FakeModel([FINISH]), FakeModel([FINISH])
+    run(default, slices_dir, tmp_path / "a")
+    run(flex, slices_dir, tmp_path / "b", service_tier="flex")
+    assert "service_tier" not in default.requests[0]
+    assert flex.requests[0]["service_tier"] == "flex"

@@ -45,6 +45,7 @@ class AgentSettings(ExperimentSettings):
     max_output_tokens: int = 24000
     max_steps: int = 14
     max_traces: int = 3
+    service_tier: str | None = None  # "flex" asks OpenAI for its slower, cheaper tier, which answers 429 when busy; None leaves the account default
     retries: int = 6  # a transient provider error (408, 429, 5xx, a lost connection) is retried this often, see retry.py
     retry_wait_seconds: float = 2.0  # the first wait, which doubles on each retry
     view: View = "axial"
@@ -151,13 +152,16 @@ def instructions_for(view: View) -> str:
 
 
 def request_settings(settings: AgentSettings) -> dict:
-    return dict(
+    request = dict(
         model=settings.model,
         instructions=instructions_for(settings.view),
         tools=TOOLS,
         reasoning={"effort": settings.reasoning_effort},
         max_output_tokens=settings.max_output_tokens,
     )
+    if settings.service_tier is not None:
+        request["service_tier"] = settings.service_tier
+    return request
 
 
 def create_response(client, settings: AgentSettings, **request):
