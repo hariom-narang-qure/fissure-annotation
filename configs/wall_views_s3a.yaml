@@ -1,0 +1,5 @@
+# Same scan and prior as wall_views.yaml, on the s3a_fit_from_s2b mask.
+nifti: work/1.2.392.200036.9116.2.6.1.54365.1690017023.1783390643.994211/scan.nii.gz
+mask: work/1.2.392.200036.9116.2.6.1.54365.1690017023.1783390643.994211/fusion/masks/s3a_fit_from_s2b.nii.gz
+fissure_prior: work/1.2.392.200036.9116.2.6.1.54365.1690017023.1783390643.994211/fusion/masks/lobe_fissure_prior.nii.gz
+out_dir: work/1.2.392.200036.9116.2.6.1.54365.1690017023.1783390643.994211/fusion/figures/wall_s3a
