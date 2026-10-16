@@ -118,7 +118,8 @@
   - All ten scans are on Lucid with their sheet and their lines.
   - Lucid's ingest service often timed out (`ReadTimeout`), even with one case at a time.
     - It stores the whole CT series in Orthanc in one request with a 30 s timeout (`orthanc.py`, `store_instances`).
-    - Four scans got through only after the scan and masks were cropped to the lungs plus 15 voxels (`.crop` suffix).
-      - The crop is exact, every sheet voxel is kept at its world position.
-    - The emphysema lines mask needed a retry 10 minutes later, so the failures depend on the service's load.
+    - The failures depend on the service's load: a case that failed went through when retried 5 to 10 minutes later.
+    - So every scan is now on Lucid uncropped, with the sheet and the lines in one case.
+      - Five of them needed the retry, under the suffixes `.flex_step4.full1` or `.full2`.
+    - Cropped copies (`.crop`) also exist, from an earlier workaround.
   - The failed attempts stay in the project as failed rows, since the CLI cannot delete cases.
