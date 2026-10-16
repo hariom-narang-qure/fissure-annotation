@@ -106,3 +106,16 @@
 - One mistake cost about $1 to $1.50.
   - A smoke run with no slice picks ran a whole axial range at step 1.
   - `smoke.py` now refuses that.
+
+## Full runs on flex, 2026-10-16
+- The ten severe scans ran at step 4 on OpenAI's flex tier (`configs/severe_scans_flex.yaml`), one after another, with the baseline prompt and the resampling.
+  - All ten finished, with no failed scan: 3,645 slices in about 2 hours.
+  - Portkey estimated $28.06, about $0.0077 per slice.
+  - Portkey prices flex like the default tier, so the flex discount, if any, only shows on the OpenAI invoice.
+- The collapse scan's sheet grew from 6,396 voxels (squashed, before the resampling) to 30,181.
+- The pneumothorax and ground-glass sheets are small (1,983 and 2,438 voxels), since little aerated lung is left.
+- Upload to Lucid (`configs/lucid_upload_severe_flex.yaml`, series id suffix `.flex_step4`):
+  - Five cases imported with both masks, and two more with the sheet only.
+  - Three scans (lobectomy, spiculated mass, honeycombing) never imported.
+    - Lucid's ingest service timed out on every try (`ReadTimeout`), one case at a time, split into one mask per case, and under fresh ids.
+    - The timeout is inside the service and needs its owners.
