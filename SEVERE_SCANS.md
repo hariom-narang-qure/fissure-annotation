@@ -14,7 +14,7 @@
   - Variants were compared blind, labelled A and B.
 - The scripts are in `work/severe/`, which is gitignored:
   - `smoke.py`, `prepare.py`, `render_sweep.py`, `compare.py`, and the prompt variants in `prompts/`.
-- The sol spend for the iteration was $7.23 billed.
+- The sol spend for the iteration was $7.92 billed.
 
 ## Finding 1: thick slices squashed the coronal and sagittal views
 - Slices of coronal and sagittal views are cut on the voxel grid.
@@ -74,10 +74,21 @@
 - The lobe segmentation also seems to fail on dense lung.
   - That could make post-processing remove real lines there.
 
+## Finding 4: a nodule on a fissure is not a failure mode
+- The fissural nodule of `…271645` is a solid blob of about 10 x 10 x 14 mm at RAS voxel x=347, y=247, z=220.
+  - It was found by cutting vessels off solid lung with a morphological opening.
+  - It sits near the hilum, on the line where the fissures meet.
+  - A reviewer agreed it is probably on the fissure, but was not certain.
+  - The first candidate, at x=357, y=268, z=246, was a branching vessel structure.
+- Both prompts were run on 9 slices through it, the baseline as A and v2 as B, and reviewed blind.
+  - Neither version ran around the nodule edge, stopped at it or jumped onto it.
+  - Both carried the fissure straight over the nodule.
+  - The baseline was better on 4 slices, v2 on 3, and they were the same on 2.
+  - v2 found 3 more real fissure pieces, but had small hooks near the nodule.
+  - So v2 is about even with the baseline on this normal-looking region.
+- The spend for the iteration came to $7.92 billed.
+
 ## Open
-- The fissural nodule scan (`…271645`) did not test a nodule on a fissure.
-  - The candidate found near the minor fissure is a 30 x 22 x 16 mm branching structure, mostly vessels.
-  - A reviewer could not find a nodule there either.
 - v2 still traces one pneumothorax edge, and follows an edge of a fluid-filled fissure rather than its centre.
 - After a lobectomy the agent invents the missing fissure.
 - A 503 from the provider on one slice failed a whole scan.
