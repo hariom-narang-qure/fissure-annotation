@@ -247,6 +247,13 @@ def run_one(job: ScanListJob, uid: str, client) -> ScanStatus:
     return status
 
 
+def outcome_line(status: ScanStatus) -> str:
+    "the last line of a traceback names the error, the whole traceback is in status.json"
+    if status.error is None:
+        return status.state
+    return f"{status.state}: {status.error.strip().splitlines()[-1]}"
+
+
 def run_scan_list(job: ScanListJob, client, uids: list[str] | None = None) -> dict[str, ScanStatus]:
     "uids picks the series to run, in order; by default they are the series of the CSV"
     statuses: dict[str, ScanStatus] = {}
@@ -257,7 +264,7 @@ def run_scan_list(job: ScanListJob, client, uids: list[str] | None = None) -> di
             continue
         print(f"[{number}/{len(uids)}] {uid} starting", flush=True)
         statuses[uid] = run_one(job, uid, client)
-        print(f"[{number}/{len(uids)}] {uid} {statuses[uid].state}", flush=True)
+        print(f"[{number}/{len(uids)}] {uid} {outcome_line(statuses[uid])}", flush=True)
     return statuses
 
 

@@ -144,3 +144,12 @@ def test_a_given_list_of_series_runs_instead_of_the_csv(tmp_path, monkeypatch):
     monkeypatch.setattr(scan_list, "process_scan", lambda job, uid, folder, client: ran.append(uid))
     run_scan_list(job_for(tmp_path, ["a", "b", "c"]), client=None, uids=["c", "a"])
     assert ran == ["c", "a"]
+
+
+def test_a_failed_scan_prints_the_error_and_not_only_failed(tmp_path, monkeypatch, capsys):
+    def process(job, uid, folder, client):
+        raise RuntimeError("flex is unavailable")
+
+    monkeypatch.setattr(scan_list, "process_scan", process)
+    run_scan_list(job_for(tmp_path, ["a"]), client=None)
+    assert "failed: RuntimeError: flex is unavailable" in capsys.readouterr().out
