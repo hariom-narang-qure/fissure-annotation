@@ -4,7 +4,7 @@ import ast
 from pathlib import Path
 
 IMAGING = Path(__file__).parents[1] / "src" / "fissure_annotation" / "imaging"
-NOT_ALLOWED_IN_IMAGING = {"portkey_ai", "pydantic", "pydantic_settings", "yaml"}
+NOT_ALLOWED_IN_IMAGING = {"openai", "portkey_ai", "pydantic", "pydantic_settings", "yaml"}
 
 
 def imported_modules(path: Path) -> set[str]:

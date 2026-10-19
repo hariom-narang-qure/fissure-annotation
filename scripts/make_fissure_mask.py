@@ -8,11 +8,10 @@ The agent calls the model once per slice, so try a small range first:
 
 import sys
 
-from fissure_annotation.experiment import portkey_client
+from fissure_annotation.experiment import model_client
 from fissure_annotation.fissure_mask import FissureMaskJob, make_fissure_mask
 from fissure_annotation.settings import load_settings
 
 if __name__ == "__main__":
-    print(
-        make_fissure_mask(load_settings(FissureMaskJob, sys.argv[1:]), portkey_client())
-    )
+    job = load_settings(FissureMaskJob, sys.argv[1:])
+    print(make_fissure_mask(job, model_client(job.agent)))

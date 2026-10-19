@@ -1,0 +1,15 @@
+# Does flex work when sol is called straight through OpenAI, and what does one slice cost?
+# Axial slice 220 of the nodule-on-fissure scan, which the Portkey flex run took in 5 steps, 15,419 input and 777 output tokens.
+slices_dir: work/scans/1.2.392.200036.9116.2.6.1.20715.4132512272.1775239833.271645/flex_step4/fissures_work/axial/slices
+out_dir: work/scans/_runs/openai_flex/axial_220
+first_slice: 220
+last_slice: 220
+agent:
+  provider: openai
+  model: gpt-6.1-sol
+  service_tier: flex
+  view: axial
+# USD per million tokens. From third-party pricing pages (eesel.ai, apidog), not OpenAI's own: check them on openai.com/api/pricing.
+prices:
+  default: {input: 2.00, cached_input: 0.10, cache_write: 2.50, output: 10.00}
+  flex: {input: 1.00, cached_input: 0.05, cache_write: 1.25, output: 5.00}

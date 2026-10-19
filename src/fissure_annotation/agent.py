@@ -4,17 +4,22 @@
 - Waypoints are saved before they are traced, so every run keeps the model's own decision next to the trace.
 - Uses the Responses API, because chat completions refuse function tools while reasoning is on for gpt-6.1-sol.
 - Images inside tool results work on the Responses API, so a zoom comes back as the tool's own output.
+- The model is reached through Portkey, or straight through OpenAI, see `provider`.
+  - Portkey names the model with its provider, `@openai/gpt-6.1-sol`, and OpenAI names it alone, `gpt-6.1-sol`.
+- Each response's usage is kept in the log, with the tier that served it, so the cost of a slice can be priced (pricing.py).
+  - Cached input tokens are part of the input tokens, and reasoning tokens part of the output tokens.
 """
 
 import base64
 import io
 import json
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 from jaxtyping import UInt8
 from PIL import Image
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from tqdm import tqdm
 
 from fissure_annotation.imaging.overlay import red_overlay
@@ -41,6 +46,7 @@ OVERLAY_SCALE = 3
 
 
 class AgentSettings(ExperimentSettings):
+    provider: Literal["portkey", "openai"] = "portkey"  # who the requests go to, see experiment.model_client
     model: str = "@openai/gpt-6.1-sol"
     reasoning_effort: str = "medium"
     max_output_tokens: int = 24000
@@ -58,8 +64,24 @@ class AgentSettings(ExperimentSettings):
         420,
     )  # the lungs of a 512 x 512 axial slice, so the overlay shows the whole fissure context; other views show the whole slice
 
+    @model_validator(mode="after")
+    def check_model_name_fits_provider(self):
+        "a Portkey model name sent to OpenAI is refused only after the run starts, so it is caught here"
+        if self.provider == "openai" and self.model.startswith("@"):
+            raise ValueError(f"OpenAI names models without a provider, use {self.model.split('/')[-1]!r}")
+        return self
+
     def overlay_box_for(self, shape: tuple[int, int]) -> Box:
         return self.overlay_box if self.view == "axial" else (0, 0, shape[1], shape[0])
+
+
+class ResponseUsage(BaseModel):
+    input_tokens: int
+    cached_input_tokens: int = 0
+    cache_write_tokens: int = 0
+    output_tokens: int
+    reasoning_tokens: int = 0
+    service_tier: str | None = None  # the tier that served the request, "flex" when flex took it
 
 
 class SliceLog(BaseModel):
@@ -70,6 +92,24 @@ class SliceLog(BaseModel):
     input_tokens: int
     output_tokens: int
     calls: list[dict]
+    responses: list[ResponseUsage] = []
+
+
+def token_detail(details, name: str) -> int:
+    "the details are missing or None on some providers and in older logs"
+    return getattr(details, name, None) or 0
+
+
+def usage_of(response) -> ResponseUsage:
+    usage = response.usage
+    return ResponseUsage(
+        input_tokens=usage.input_tokens,
+        cached_input_tokens=token_detail(getattr(usage, "input_tokens_details", None), "cached_tokens"),
+        cache_write_tokens=token_detail(getattr(usage, "input_tokens_details", None), "cache_write_tokens"),
+        output_tokens=usage.output_tokens,
+        reasoning_tokens=token_detail(getattr(usage, "output_tokens_details", None), "reasoning_tokens"),
+        service_tier=getattr(response, "service_tier", None),
+    )
 
 
 def text(message: str) -> dict:
@@ -218,6 +258,7 @@ def run_slice(
         log.steps = step + 1
         log.input_tokens += response.usage.input_tokens
         log.output_tokens += response.usage.output_tokens
+        log.responses.append(usage_of(response))
         calls = [item for item in response.output if item.type == "function_call"]
         if not calls:
             break

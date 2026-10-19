@@ -167,3 +167,31 @@ def test_a_slice_waits_for_flex_capacity_and_says_so(slices_dir, tmp_path, capsy
     log = run(NoFlexCapacityModel([FINISH]), slices_dir, tmp_path, capacity_wait_seconds=0.0)
     assert log.summary == "one fissure"
     assert "axial slice 7: no flex capacity, wait 2 in 0s" in capsys.readouterr().out
+
+
+class FlexModel(FakeModel):
+    "answers like OpenAI does, with the token details and the tier that served the request"
+
+    def create(self, **request):
+        response = super().create(**request)
+        response.service_tier = "flex"
+        response.usage = SimpleNamespace(
+            input_tokens=100,
+            input_tokens_details=SimpleNamespace(cached_tokens=60, cache_write_tokens=None),
+            output_tokens=10,
+            output_tokens_details=SimpleNamespace(reasoning_tokens=4),
+        )
+        return response
+
+
+def test_the_log_keeps_the_usage_and_tier_of_every_response(slices_dir, tmp_path):
+    log = run(FlexModel([TRACE], [FINISH]), slices_dir, tmp_path)
+    assert len(log.responses) == 2
+    usage = log.responses[0]
+    assert (usage.cached_input_tokens, usage.cache_write_tokens, usage.reasoning_tokens) == (60, 0, 4)
+    assert usage.service_tier == "flex"
+
+
+def test_a_portkey_model_name_is_refused_for_openai():
+    with pytest.raises(ValueError, match="gpt-6.1-sol"):
+        AgentSettings(provider="openai", model="@openai/gpt-6.1-sol")

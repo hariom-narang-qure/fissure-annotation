@@ -15,12 +15,12 @@ Then run it. A scan that is done is skipped, and a stopped run resumes where it 
     uv run --env-file .env python scripts/run_review_v1_scans.py --config configs/review_v1_scans.yaml
 
 Each scan's outputs go to work/scans/<series uid>/flex_step4/, with status.json saying done, failed or skipped.
-Needs PORTKEY_API_KEY for the model calls, which --env-file .env provides.
+Needs PORTKEY_API_KEY for the model calls, or OPENAI_API_KEY with agent.provider set to openai, which --env-file .env provides.
 """
 
 import sys
 
-from fissure_annotation.experiment import portkey_client
+from fissure_annotation.experiment import model_client
 from fissure_annotation.scan_list import (
     ScanListJob,
     plan_lines,
@@ -55,7 +55,7 @@ if __name__ == "__main__":
     if job.dry_run:
         print("\n".join(plan_lines(job, REVIEW_V1_NEW_SCANS)))
         sys.exit(0)
-    statuses = run_scan_list(job, portkey_client(), REVIEW_V1_NEW_SCANS)
+    statuses = run_scan_list(job, model_client(job.agent), REVIEW_V1_NEW_SCANS)
     failed = [uid for uid, status in statuses.items() if status.state == "failed"]
     print(f"ran {len(statuses)} scans, {len(failed)} failed, see status.json in their folders")
     sys.exit(1 if failed else 0)

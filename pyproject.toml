@@ -11,6 +11,7 @@ dependencies = [
     "jaxtyping>=0.3.11",
     "nibabel>=5.4.2",
     "numpy>=2.5.3",
+    "openai>=3.35.1",
     "pillow>=12.3.0",
     "portkey-ai>=2.3.4",
     "pydantic>=2.13.5",

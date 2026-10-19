@@ -9,12 +9,12 @@ Then try a few scans before the whole list:
     uv run --env-file .env python scripts/run_scan_list.py --config configs/scan_list.yaml --limit 2
 
 Needs in the environment, for the model calls (not for the plan):
-- PORTKEY_API_KEY, which `--env-file .env` provides.
+- PORTKEY_API_KEY, or OPENAI_API_KEY with agent.provider set to openai, which `--env-file .env` provides.
 """
 
 import sys
 
-from fissure_annotation.experiment import portkey_client
+from fissure_annotation.experiment import model_client
 from fissure_annotation.scan_list import ScanListJob, plan_lines, run_scan_list
 from fissure_annotation.settings import load_settings
 
@@ -23,7 +23,7 @@ if __name__ == "__main__":
     if job.dry_run:
         print("\n".join(plan_lines(job)))
         sys.exit(0)
-    statuses = run_scan_list(job, portkey_client())
+    statuses = run_scan_list(job, model_client(job.agent))
     failed = [uid for uid, status in statuses.items() if status.state == "failed"]
     print(f"ran {len(statuses)} scans, {len(failed)} failed, see status.json in their folders")
     sys.exit(1 if failed else 0)

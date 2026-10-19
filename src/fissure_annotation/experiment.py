@@ -3,6 +3,7 @@
 - Each slice is an independent conversation, run in parallel, one thread per slice.
 - `slice_step` above 1 runs only every slice_step-th slice of the range, so the cost drops by about that factor.
 - Everything that distinguishes one run from another (scan, slices, model) is in the YAML config.
+- The client comes from `agent.provider`, see `model_client`.
 - Output goes under `out_dir`: points/, masks/, overlays/, logs/ and contact_sheet.png (see waypoints.RunFolder).
 """
 
@@ -12,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 from jaxtyping import UInt8
+from openai import OpenAI
 from portkey_ai import Portkey
 from pydantic import Field
 from tqdm import tqdm
@@ -54,8 +56,20 @@ def export_slices(config: SliceExport) -> int:
     return write_slices(config.nifti, config.out_dir, config.view)
 
 
+FLEX_TIMEOUT_SECONDS = 900.0  # flex answers slowly, OpenAI suggests 15 minutes instead of its default 10
+
+
 def portkey_client() -> Portkey:
     return Portkey(api_key=os.environ["PORTKEY_API_KEY"])
+
+
+def openai_client() -> OpenAI:
+    "max_retries=0, since the SDK would retry a 429 silently and retry.py does it with a log line"
+    return OpenAI(api_key=os.environ["OPENAI_API_KEY"], max_retries=0, timeout=FLEX_TIMEOUT_SECONDS)
+
+
+def model_client(agent: AgentSettings) -> Portkey | OpenAI:
+    return openai_client() if agent.provider == "openai" else portkey_client()
 
 
 def run_slices(config: WaypointExperiment, client) -> list[SliceLog]:
