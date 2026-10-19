@@ -247,9 +247,10 @@ def run_one(job: ScanListJob, uid: str, client) -> ScanStatus:
     return status
 
 
-def run_scan_list(job: ScanListJob, client) -> dict[str, ScanStatus]:
+def run_scan_list(job: ScanListJob, client, uids: list[str] | None = None) -> dict[str, ScanStatus]:
+    "uids picks the series to run, in order; by default they are the series of the CSV"
     statuses: dict[str, ScanStatus] = {}
-    uids = uids_of(job)
+    uids = uids_of(job) if uids is None else uids
     for number, uid in enumerate(uids, start=1):
         if ScanFolder(root=job.out_root, uid=uid, run=job.run_name).is_done:
             print(f"[{number}/{len(uids)}] {uid} done already", flush=True)
@@ -275,10 +276,10 @@ def plan_line(job: ScanListJob, uid: str) -> str:
     return f"{uid} {planned_slices(job, uid)} slices{note}"
 
 
-def plan_lines(job: ScanListJob) -> list[str]:
+def plan_lines(job: ScanListJob, uids: list[str] | None = None) -> list[str]:
     "one line per scan, then the total, without calling the model"
     lines, total_slices = [], 0
-    for uid in uids_of(job):
+    for uid in uids_of(job) if uids is None else uids:
         scan = scan_path(job.scans_dir, uid)
         if ScanFolder(root=job.out_root, uid=uid, run=job.run_name).is_done:
             lines.append(f"{uid} done already")

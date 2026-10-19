@@ -137,3 +137,10 @@ def test_runs_of_a_scan_list_go_to_their_named_subfolder(tmp_path, monkeypatch):
     monkeypatch.setattr(scan_list, "process_scan", lambda job, uid, folder, client: seen.append(folder.folder))
     run_scan_list(job_for(tmp_path, ["a"], run_name="flex_step4"), client=None)
     assert seen == [tmp_path / "out" / "a" / "flex_step4"]
+
+
+def test_a_given_list_of_series_runs_instead_of_the_csv(tmp_path, monkeypatch):
+    ran = []
+    monkeypatch.setattr(scan_list, "process_scan", lambda job, uid, folder, client: ran.append(uid))
+    run_scan_list(job_for(tmp_path, ["a", "b", "c"]), client=None, uids=["c", "a"])
+    assert ran == ["c", "a"]

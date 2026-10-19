@@ -1,0 +1,15 @@
+# The scans added for the Lucid project "Fissure Segmentation Review (v1)", run like the ten severe scans:
+# step 4, all three views, the flex tier, resampling of thick-slice scans, and the baseline prompt.
+# The series are listed in scripts/run_review_v1_scans.py. The CSV is only where their reports are read later.
+csv: minimal_scan_list.csv
+scans_dir: /realdata/hariom.narang/qmuse/data/scans
+out_root: work/scans
+run_name: flex_step4
+slice_step: 4
+views: [axial, coronal, sagittal]
+workers: 16
+agent:
+  service_tier: flex
+totalsegmentator:
+  command: [/home/hariom.narang/fissure-work-bak/1.2.392.200036.9116.2.6.1.54365.1690017023.1783390643.994211/fusion/tools/ts_venv/bin/python, -m, totalsegmentator.bin.TotalSegmentator]
+  gpu_index: 0
