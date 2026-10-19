@@ -148,3 +148,22 @@ def test_the_service_tier_is_sent_only_when_it_is_set(slices_dir, tmp_path):
     run(flex, slices_dir, tmp_path / "b", service_tier="flex")
     assert "service_tier" not in default.requests[0]
     assert flex.requests[0]["service_tier"] == "flex"
+
+
+class NoFlexCapacityModel(FakeModel):
+    "answers the first two requests with a lack of flex capacity, as OpenAI does"
+
+    def create(self, **request):
+        self.refusals = getattr(self, "refusals", 0)
+        if self.refusals < 2:
+            self.refusals += 1
+            error = Exception("Flex processing is temporarily unavailable")
+            error.status_code, error.code = 429, "flex_unavailable"
+            raise error
+        return super().create(**request)
+
+
+def test_a_slice_waits_for_flex_capacity_and_says_so(slices_dir, tmp_path, capsys):
+    log = run(NoFlexCapacityModel([FINISH]), slices_dir, tmp_path, capacity_wait_seconds=0.0)
+    assert log.summary == "one fissure"
+    assert "axial slice 7: no flex capacity, wait 2 in 0s" in capsys.readouterr().out

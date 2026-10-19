@@ -15,13 +15,14 @@ import numpy as np
 from jaxtyping import UInt8
 from PIL import Image
 from pydantic import BaseModel
+from tqdm import tqdm
 
 from fissure_annotation.imaging.overlay import red_overlay
 from fissure_annotation.imaging.png import read_gray, save_png
 from fissure_annotation.imaging.slices import View, slice_file_name
 from fissure_annotation.imaging.ticks import Box, crop_with_ticks
 from fissure_annotation.imaging.tracing import trace_mask
-from fissure_annotation.retry import with_retries
+from fissure_annotation.retry import describe, with_retries
 from fissure_annotation.settings import ExperimentSettings
 from fissure_annotation.tools import TOOLS
 from fissure_annotation.waypoints import Fissure, RunFolder, SliceWaypoints
@@ -48,6 +49,7 @@ class AgentSettings(ExperimentSettings):
     service_tier: str | None = None  # "flex" asks OpenAI for its slower, cheaper tier, which answers 429 when busy; None leaves the account default
     retries: int = 6  # a transient provider error (408, 429, 5xx, a lost connection) is retried this often, see retry.py
     retry_wait_seconds: float = 2.0  # the first wait, which doubles on each retry
+    capacity_wait_seconds: float = 60.0  # the wait between retries while flex has no capacity, which go on until it is back
     view: View = "axial"
     overlay_box: Box = (
         40,
@@ -164,11 +166,22 @@ def request_settings(settings: AgentSettings) -> dict:
     return request
 
 
-def create_response(client, settings: AgentSettings, **request):
+def report_retry(settings: AgentSettings, slice_index: int):
+    "tqdm.write prints above the progress bar of the run instead of breaking it"
+
+    def report(error: Exception, which: str, wait: float) -> None:
+        tqdm.write(f"{settings.view} slice {slice_index}: {which} in {wait:.0f}s, {describe(error)}")
+
+    return report
+
+
+def create_response(client, settings: AgentSettings, slice_index: int, **request):
     return with_retries(
         lambda: client.responses.create(**request_settings(settings), **request),
         settings.retries,
         settings.retry_wait_seconds,
+        settings.capacity_wait_seconds,
+        on_retry=report_retry(settings, slice_index),
     )
 
 
@@ -200,7 +213,7 @@ def run_slice(
         output_tokens=0,
         calls=[],
     )
-    response = create_response(client, settings, input=first_input(session))
+    response = create_response(client, settings, slice_index, input=first_input(session))
     for step in range(settings.max_steps):
         log.steps = step + 1
         log.input_tokens += response.usage.input_tokens
@@ -226,7 +239,7 @@ def run_slice(
         if log.summary is not None:
             break
         response = create_response(
-            client, settings, previous_response_id=response.id, input=outputs
+            client, settings, slice_index, previous_response_id=response.id, input=outputs
         )
     log.traces = session.traces
     folder.log_path(session.slice_png).parent.mkdir(parents=True, exist_ok=True)
