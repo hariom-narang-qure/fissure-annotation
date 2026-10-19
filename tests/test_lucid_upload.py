@@ -181,3 +181,12 @@ def test_the_report_from_the_csv_is_added_as_a_finding_with_no_mask(tmp_path, mo
     upload_to_lucid(job)
     report_finding = lucid.bundle["series"][0]["annotations"][-1]
     assert report_finding == {"name": "radiologist_report", "report_text": "EXAM: CT CHEST\n\nIMPRESSION: ok"}
+
+
+def test_a_named_run_is_found_in_its_subfolder(tmp_path):
+    job = job_for(tmp_path, run_name="flex_step4")
+    folder = tmp_path / "out" / "a" / "flex_step4"
+    (folder / "post").mkdir(parents=True)
+    (folder / "post" / "sheet.nii.gz").write_text("sheet")
+    (folder / "scan.nii.gz").write_text("scan")
+    assert lucid_upload.is_ready(job, "a")

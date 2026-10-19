@@ -50,6 +50,7 @@ SCAN_NAME = "scan.nii.gz"
 class LucidUploadJob(ExperimentSettings):
     csv: Path
     out_root: Path  # where run_scan_list wrote the folder of each scan
+    run_name: str = ""  # the run's subfolder in each scan folder, as in the scan list config
     project_slug: str
     project_name: str
     uid_column: str = "series_instance_uid"
@@ -111,12 +112,12 @@ def stage_dir(job: LucidUploadJob) -> Path:
 
 
 def finding_files(job: LucidUploadJob, uid: str) -> dict[str, Path]:
-    folder = ScanFolder(root=job.out_root, uid=uid).folder
+    folder = ScanFolder(root=job.out_root, uid=uid, run=job.run_name).folder
     return {name: folder / relative for name, relative in job.findings.items()}
 
 
 def scan_file(job: LucidUploadJob, uid: str) -> Path:
-    return ScanFolder(root=job.out_root, uid=uid).scan_path
+    return ScanFolder(root=job.out_root, uid=uid, run=job.run_name).scan_path
 
 
 def is_ready(job: LucidUploadJob, uid: str) -> bool:

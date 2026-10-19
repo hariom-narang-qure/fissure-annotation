@@ -125,3 +125,15 @@ def test_a_scan_with_slices_thicker_than_the_limit_is_skipped_and_recorded(tmp_p
     statuses = run_scan_list(job, client=None)
     assert statuses["a"].state == "skipped" and "10.0 mm" in statuses["a"].error
     assert "skip" in plan_lines(job)[0]
+
+
+def test_a_named_run_is_a_subfolder_of_the_scan(tmp_path):
+    folder = ScanFolder(root=tmp_path, uid="a", run="flex_step4")
+    assert folder.sheet_path == tmp_path / "a" / "flex_step4" / "post" / "sheet.nii.gz"
+
+
+def test_runs_of_a_scan_list_go_to_their_named_subfolder(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(scan_list, "process_scan", lambda job, uid, folder, client: seen.append(folder.folder))
+    run_scan_list(job_for(tmp_path, ["a"], run_name="flex_step4"), client=None)
+    assert seen == [tmp_path / "out" / "a" / "flex_step4"]

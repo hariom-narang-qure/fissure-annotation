@@ -1,7 +1,8 @@
 # The series of minimal_scan_list.csv, the agent on every 4th slice of all three views, then post-processing.
 csv: minimal_scan_list.csv
 scans_dir: /realdata/hariom.narang/qmuse/data/scans
-out_root: work/scan_list_step4
+out_root: work/scans
+run_name: step4
 slice_step: 4
 views: [axial, coronal, sagittal]
 workers: 16

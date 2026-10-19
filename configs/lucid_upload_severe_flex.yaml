@@ -1,6 +1,7 @@
 # The full step-4 flex runs of the severe scans, each as its own case with its sheet and its raw lines.
 csv: work/severe_flex_scans.csv
-out_root: work/severe_flex_step4
+out_root: work/scans
+run_name: flex_step4
 project_slug: hariom-fissure-segmentation
 project_name: "(Hariom) Fissure Segmentation"
 series_suffix: .flex_step4

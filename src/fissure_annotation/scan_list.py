@@ -13,6 +13,8 @@ How:
 3. For each scan, the agent is run on every `slice_step`-th slice of each view (`make_fissure_mask`).
 4. Then the masks are cleaned and blended into one sheet (`post_process_fissure_masks`).
 5. Each scan gets its own folder under `out_root`, see `ScanFolder`.
+   - With `run_name` set, a run is a subfolder of the scan, `<out_root>/<uid>/<run_name>/`.
+   - So all runs of a scan sit together, for example `work/scans/<uid>/flex_step4/`.
    - A scan with a sheet in its folder is done, and is skipped on the next run.
    - A run that stopped halfway is finished by running it again, since the agent skips slices that have a log.
    - A scan that raised an error, or was skipped, is recorded in its `status.json` and the list goes on.
@@ -55,6 +57,7 @@ class ScanListJob(ExperimentSettings):
     csv: Path
     scans_dir: Path  # the qmuse scan store, one folder per first two characters of the sha1 of the UID
     out_root: Path
+    run_name: str = ""  # each scan's outputs go to <out_root>/<uid>/<run_name>/
     uid_column: str = "series_instance_uid"
     views: list[View] = ["axial", "coronal", "sagittal"]
     slice_step: int = Field(
@@ -73,10 +76,11 @@ class ScanListJob(ExperimentSettings):
 class ScanFolder(BaseModel):
     root: Path
     uid: str
+    run: str = ""  # the subfolder of the scan for one run; empty puts the run in the scan folder itself
 
     @property
     def folder(self) -> Path:
-        return self.root / self.uid
+        return self.root / self.uid / self.run if self.run else self.root / self.uid
 
     @property
     def scan_path(self) -> Path:
@@ -224,7 +228,7 @@ def record_status(folder: ScanFolder, status: ScanStatus) -> None:
 
 def run_one(job: ScanListJob, uid: str, client) -> ScanStatus:
     "an error is recorded and returned, so the next scan still runs"
-    folder = ScanFolder(root=job.out_root, uid=uid)
+    folder = ScanFolder(root=job.out_root, uid=uid, run=job.run_name)
     started = time.monotonic()
     try:
         process_scan(job, uid, folder, client)
@@ -247,7 +251,7 @@ def run_scan_list(job: ScanListJob, client) -> dict[str, ScanStatus]:
     statuses: dict[str, ScanStatus] = {}
     uids = uids_of(job)
     for number, uid in enumerate(uids, start=1):
-        if ScanFolder(root=job.out_root, uid=uid).is_done:
+        if ScanFolder(root=job.out_root, uid=uid, run=job.run_name).is_done:
             print(f"[{number}/{len(uids)}] {uid} done already", flush=True)
             continue
         statuses[uid] = run_one(job, uid, client)
@@ -276,7 +280,7 @@ def plan_lines(job: ScanListJob) -> list[str]:
     lines, total_slices = [], 0
     for uid in uids_of(job):
         scan = scan_path(job.scans_dir, uid)
-        if ScanFolder(root=job.out_root, uid=uid).is_done:
+        if ScanFolder(root=job.out_root, uid=uid, run=job.run_name).is_done:
             lines.append(f"{uid} done already")
         elif not scan.exists():
             lines.append(f"{uid} MISSING {scan}")

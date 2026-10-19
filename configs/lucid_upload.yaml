@@ -1,6 +1,7 @@
 # The scans of run_scan_list and their sheets, as a project of mask findings. The S3 prefix comes from $SALVO_BUCKET_PREFIX.
 csv: minimal_scan_list.csv
-out_root: work/scan_list_step4
+out_root: work/scans
+run_name: step4
 project_slug: hariom-fissure-segmentation
 project_name: "(Hariom) Fissure Segmentation"
 # the name in the viewer, and the file inside the folder of each scan
