@@ -22,5 +22,6 @@ from fissure_annotation.lucid_upload import LucidUploadJob, upload_to_lucid
 from fissure_annotation.settings import load_settings
 
 if __name__ == "__main__":
-    left_out = upload_to_lucid(load_settings(LucidUploadJob, sys.argv[1:]))
-    print(f"{len(left_out)} series left out, a finding is missing: {left_out}")
+    report = upload_to_lucid(load_settings(LucidUploadJob, sys.argv[1:]))
+    print(report.model_dump_json(indent=2))
+    sys.exit(1 if report.failed else 0)

@@ -7,7 +7,7 @@ from fissure_annotation import lucid_upload
 from fissure_annotation.lucid_upload import (
     LucidUploadJob,
     bundle_series,
-    import_statuses,
+    study_uid,
     require_dispatched,
     s3_root,
     stage_series,
@@ -70,8 +70,8 @@ def test_a_dry_run_calls_neither_lucid_nor_s3_and_leaves_out_unfinished_scans(
     commands = []
     monkeypatch.setattr(lucid_upload, "run", lambda command: commands.append(command) or "")
     finish_scan(tmp_path, "a")  # b has no sheet
-    left_out = upload_to_lucid(job_for(tmp_path, dry_run=True))
-    assert left_out == ["b"]
+    report = upload_to_lucid(job_for(tmp_path, dry_run=True))
+    assert report.left_out == ["b"] and report.imported == {}
     assert len(commands) == 1 and commands[0][:3] == ["aws", "s3", "sync"]
     assert "--dryrun" in commands[0]
     bundle = json.loads((tmp_path / "out" / "lucid_bundle_proj.json").read_text())
@@ -82,11 +82,6 @@ def test_a_bundle_that_was_not_dispatched_is_an_error():
     with pytest.raises(RuntimeError, match="not dispatched"):
         require_dispatched(json.dumps({"dispatch_error": "queue down"}))
     require_dispatched(json.dumps({"dispatch_error": None}))
-
-
-def test_import_statuses_are_counted():
-    output = json.dumps([{"import_status": "ready"}, {"import_status": "ready"}, {"import_status": "failed"}])
-    assert import_statuses(output) == {"ready": 2, "failed": 1}
 
 
 def test_a_series_suffix_makes_its_own_case_and_folder(tmp_path, monkeypatch):
@@ -100,21 +95,56 @@ def test_a_series_suffix_makes_its_own_case_and_folder(tmp_path, monkeypatch):
     assert (lucid_upload.stage_dir(job) / "a.flex4" / "scan.nii.gz").exists()
 
 
-def test_each_series_is_submitted_on_its_own_and_waited_for(tmp_path, monkeypatch):
-    monkeypatch.setenv("SALVO_BUCKET_PREFIX", "me")
-    commands = []
+class FakeLucid:
+    "answers salvo-client commands; each submitted series id imports with the next scripted status for its scan"
 
-    def fake_run(command):
-        commands.append(command)
-        if command[:3] == ["salvo-client", "project", "submit-bundle"]:
+    def __init__(self, outcomes):
+        self.outcomes = {uid: list(statuses) for uid, statuses in outcomes.items()}
+        self.cases, self.submitted = {}, []
+
+    def __call__(self, command):
+        if command[0] != "salvo-client":
+            return ""  # aws s3 sync
+        action = command[2]
+        if action == "submit-bundle":
+            series_id = json.loads(Path(command[4]).read_text())["series"][0]["series_id"]
+            self.submitted.append(series_id)
+            uid = series_id.split(".retry")[0]
+            self.cases[study_uid("proj", series_id)] = self.outcomes[uid].pop(0)
             return json.dumps({"dispatch_error": None})
-        if command[:3] == ["salvo-client", "project", "wait"]:
-            return json.dumps([{"import_status": "ready"}])
+        if action == "cases":
+            return json.dumps([{"study_instance_uid": k, "import_status": v} for k, v in self.cases.items()])
         return "{}"
 
-    monkeypatch.setattr(lucid_upload, "run", fake_run)
+
+def fast_job(tmp_path, **settings):
+    return job_for(tmp_path, retry_wait_seconds=0, poll_seconds=0, **settings)
+
+
+def test_the_study_uid_is_minted_as_the_lucid_service_mints_it():
+    "a real case: Lucid listed this series of project fissure-step-compare under this study uid"
+    series = "1.2.392.200036.9116.2.6.1.54365.1690017023.1783390643.994211"
+    assert study_uid("fissure-step-compare", series) == "2.25.92264679872701650509228289789433897723"
+
+
+def test_each_series_is_submitted_on_its_own_and_reported(tmp_path, monkeypatch):
+    monkeypatch.setenv("SALVO_BUCKET_PREFIX", "me")
+    lucid = FakeLucid({"a": ["ready"], "b": ["ready"]})
+    monkeypatch.setattr(lucid_upload, "run", lucid)
     finish_scan(tmp_path, "a")
     finish_scan(tmp_path, "b")
-    upload_to_lucid(job_for(tmp_path))
-    salvo_steps = [c[2] for c in commands if c[0] == "salvo-client"]
-    assert salvo_steps == ["create", "submit-bundle", "wait", "submit-bundle", "wait"]
+    report = upload_to_lucid(fast_job(tmp_path))
+    assert lucid.submitted == ["a", "b"]
+    assert report.imported == {"a": "a", "b": "b"} and report.failed == []
+
+
+def test_a_failed_import_is_retried_under_a_fresh_id(tmp_path, monkeypatch):
+    monkeypatch.setenv("SALVO_BUCKET_PREFIX", "me")
+    lucid = FakeLucid({"a": ["failed", "failed", "ready"], "b": ["failed"] * 4})
+    monkeypatch.setattr(lucid_upload, "run", lucid)
+    finish_scan(tmp_path, "a")
+    finish_scan(tmp_path, "b")
+    report = upload_to_lucid(fast_job(tmp_path))
+    assert lucid.submitted[:3] == ["a", "a.retry1", "a.retry2"]
+    assert report.imported == {"a": "a.retry2"}
+    assert report.failed == ["b"] and lucid.submitted[3:] == ["b", "b.retry1", "b.retry2", "b.retry3"]
