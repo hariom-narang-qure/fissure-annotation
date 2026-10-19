@@ -96,29 +96,40 @@ def test_a_series_suffix_makes_its_own_case_and_folder(tmp_path, monkeypatch):
 
 
 class FakeLucid:
-    "answers salvo-client commands; each submitted series id imports with the next scripted status for its scan"
+    """Answers salvo-client commands like the service.
 
-    def __init__(self, outcomes):
+    After a submission, the case first shows its old status (stale), then importing, then the scripted outcome.
+    Each submission of a series takes the next outcome scripted for it.
+    """
+
+    def __init__(self, outcomes, stale=None):
         self.outcomes = {uid: list(statuses) for uid, statuses in outcomes.items()}
-        self.cases, self.submitted = {}, []
+        self.stale = stale
+        self.polls, self.submitted = {}, []
 
     def __call__(self, command):
         if command[0] != "salvo-client":
             return ""  # aws s3 sync
         action = command[2]
         if action == "submit-bundle":
-            series_id = json.loads(Path(command[4]).read_text())["series"][0]["series_id"]
+            self.bundle = json.loads(Path(command[4]).read_text())
+            series_id = self.bundle["series"][0]["series_id"]
             self.submitted.append(series_id)
-            uid = series_id.split(".retry")[0]
-            self.cases[study_uid("proj", series_id)] = self.outcomes[uid].pop(0)
+            steps = ([self.stale] if self.stale else []) + ["importing", self.outcomes[series_id].pop(0)]
+            self.polls[study_uid("proj", series_id)] = steps
             return json.dumps({"dispatch_error": None})
         if action == "cases":
-            return json.dumps([{"study_instance_uid": k, "import_status": v} for k, v in self.cases.items()])
+            rows = []
+            for study, steps in self.polls.items():
+                rows.append({"study_instance_uid": study, "import_status": steps[0]})
+                if len(steps) > 1:
+                    steps.pop(0)
+            return json.dumps(rows)
         return "{}"
 
 
 def fast_job(tmp_path, **settings):
-    return job_for(tmp_path, retry_wait_seconds=0, poll_seconds=0, **settings)
+    return job_for(tmp_path, **{"retry_wait_seconds": 0, "poll_seconds": 0, "grace_seconds": 0, **settings})
 
 
 def test_the_study_uid_is_minted_as_the_lucid_service_mints_it():
@@ -138,13 +149,35 @@ def test_each_series_is_submitted_on_its_own_and_reported(tmp_path, monkeypatch)
     assert report.imported == {"a": "a", "b": "b"} and report.failed == []
 
 
-def test_a_failed_import_is_retried_under_a_fresh_id(tmp_path, monkeypatch):
+def test_a_failed_import_is_retried_under_the_same_id(tmp_path, monkeypatch):
     monkeypatch.setenv("SALVO_BUCKET_PREFIX", "me")
     lucid = FakeLucid({"a": ["failed", "failed", "ready"], "b": ["failed"] * 4})
     monkeypatch.setattr(lucid_upload, "run", lucid)
     finish_scan(tmp_path, "a")
     finish_scan(tmp_path, "b")
     report = upload_to_lucid(fast_job(tmp_path))
-    assert lucid.submitted[:3] == ["a", "a.retry1", "a.retry2"]
-    assert report.imported == {"a": "a.retry2"}
-    assert report.failed == ["b"] and lucid.submitted[3:] == ["b", "b.retry1", "b.retry2", "b.retry3"]
+    assert lucid.submitted == ["a"] * 3 + ["b"] * 4
+    assert report.imported == {"a": "a"} and report.failed == ["b"]
+
+
+def test_the_old_status_of_a_resubmitted_case_is_not_taken_as_the_result(tmp_path, monkeypatch):
+    "a case that was ready shows ready until the new import starts, and that import fails here"
+    monkeypatch.setenv("SALVO_BUCKET_PREFIX", "me")
+    lucid = FakeLucid({"a": ["failed"]}, stale="ready")
+    monkeypatch.setattr(lucid_upload, "run", lucid)
+    finish_scan(tmp_path, "a")
+    report = upload_to_lucid(fast_job(tmp_path, import_attempts=1, grace_seconds=60))
+    assert report.failed == ["a"]
+
+
+def test_the_report_from_the_csv_is_added_as_a_finding_with_no_mask(tmp_path, monkeypatch):
+    monkeypatch.setenv("SALVO_BUCKET_PREFIX", "me")
+    (tmp_path / "list.csv").write_text('series_instance_uid,report\na,"EXAM: CT CHEST\n\nIMPRESSION: ok"\n')
+    lucid = FakeLucid({"a": ["ready"]})
+    monkeypatch.setattr(lucid_upload, "run", lucid)
+    finish_scan(tmp_path, "a")
+    job = LucidUploadJob(csv=tmp_path / "list.csv", out_root=tmp_path / "out", project_slug="proj", project_name="Project",
+                         report_column="report", retry_wait_seconds=0, poll_seconds=0, grace_seconds=0)
+    upload_to_lucid(job)
+    report_finding = lucid.bundle["series"][0]["annotations"][-1]
+    assert report_finding == {"name": "radiologist_report", "report_text": "EXAM: CT CHEST\n\nIMPRESSION: ok"}
