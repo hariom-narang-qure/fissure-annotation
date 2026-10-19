@@ -14,6 +14,7 @@ import numpy as np
 from jaxtyping import UInt8
 from portkey_ai import Portkey
 from pydantic import Field
+from tqdm import tqdm
 
 from fissure_annotation.agent import AgentSettings, SliceLog, run_slice
 from fissure_annotation.imaging.overlay import contact_sheet, labelled, red_overlay
@@ -66,12 +67,11 @@ def run_slices(config: WaypointExperiment, client) -> list[SliceLog]:
         if not folder.log_path(config.slices_dir / slice_file_name(z)).exists()
     ]
     with ThreadPoolExecutor(config.workers) as pool:
-        return list(
-            pool.map(
-                lambda z: run_slice(client, config.agent, folder, config.slices_dir, z),
-                pending,
-            )
+        logs = pool.map(
+            lambda z: run_slice(client, config.agent, folder, config.slices_dir, z),
+            pending,
         )
+        return list(tqdm(logs, total=len(pending), desc=f"{config.agent.view} slices", unit="slice"))
 
 
 def run_experiment(config: WaypointExperiment, client) -> list[SliceLog]:

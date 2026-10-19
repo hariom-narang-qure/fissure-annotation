@@ -255,6 +255,7 @@ def run_scan_list(job: ScanListJob, client, uids: list[str] | None = None) -> di
         if ScanFolder(root=job.out_root, uid=uid, run=job.run_name).is_done:
             print(f"[{number}/{len(uids)}] {uid} done already", flush=True)
             continue
+        print(f"[{number}/{len(uids)}] {uid} starting", flush=True)
         statuses[uid] = run_one(job, uid, client)
         print(f"[{number}/{len(uids)}] {uid} {statuses[uid].state}", flush=True)
     return statuses
