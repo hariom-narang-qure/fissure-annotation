@@ -13,6 +13,7 @@ How:
   - An error is transient when its HTTP status is 408, 429 or 5xx, or when the connection failed or timed out.
   - Errors are recognised by their status code, error code or class name, so the OpenAI classes vendored by Portkey need no import.
   - Jitter keeps the parallel slices of a run from retrying in lockstep.
+- A 429 for an empty balance or a used-up quota is raised at once, since waiting does not bring credits back.
 - Any other error, or the last transient one, is raised.
 - Each retry is reported through `on_retry`, so a run shows why it is waiting.
 - Retrying a request is safe: nothing is saved before a response arrives, and `previous_response_id` points at a response that exists.
@@ -25,12 +26,20 @@ from collections.abc import Callable
 RETRIED_STATUS_CODES = frozenset({408, 429})
 RETRIED_ERROR_NAMES = frozenset({"APIConnectionError", "APITimeoutError"})
 NO_CAPACITY_CODE = "flex_unavailable"
+OUT_OF_CREDIT_CODES = frozenset({"insufficient_quota", "credit_balance_exhausted"})
 MAX_WAIT_SECONDS = 60.0
 
 OnRetry = Callable[[Exception, str, float], None]  # the error, which retry this is, and the wait in seconds
 
 
+def is_out_of_credit(error: Exception) -> bool:
+    "OpenAI puts insufficient_quota in the type and the reason in the code, so both are checked"
+    return bool({getattr(error, "code", None), getattr(error, "type", None)} & OUT_OF_CREDIT_CODES)
+
+
 def is_transient(error: Exception) -> bool:
+    if is_out_of_credit(error):
+        return False
     status = getattr(error, "status_code", None)
     if isinstance(status, int):
         return status in RETRIED_STATUS_CODES or status >= 500

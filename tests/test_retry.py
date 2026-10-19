@@ -98,3 +98,18 @@ def test_each_retry_is_reported_with_its_wait():
                  on_retry=lambda error, which, wait: reports.append((which, wait)))
     assert reports[0] == ("no flex capacity, wait 1", 60.0)
     assert reports[1][0] == "retry 1/2"
+
+
+class OutOfCredit(StatusError):
+    "what OpenAI answers when the balance is empty"
+
+    def __init__(self):
+        super().__init__(429)
+        self.code, self.type = "credit_balance_exhausted", "insufficient_quota"
+
+
+def test_an_empty_balance_is_raised_at_once():
+    request, calls = failing([OutOfCredit()])
+    with pytest.raises(OutOfCredit):
+        with_retries(request, retries=3, base_seconds=1.0, capacity_wait_seconds=60.0, sleep=lambda s: None)
+    assert len(calls) == 1
