@@ -127,3 +127,63 @@ def test_with_ridge_pictures_the_agent_sees_the_ridge_map_and_the_trace_still_fo
     assert (seen == ridge_picture(read_gray(slices_dir / "slice_0004.png"), 30)).all()
     traced = read_gray(folder.mask_path(slices_dir / "slice_0008.png")) > 0
     assert set(np.nonzero(traced)[0]) == {308}
+
+
+def decoded(part):
+    import base64
+    import io
+
+    from PIL import Image
+
+    return np.asarray(Image.open(io.BytesIO(base64.b64decode(part["image_url"].split(",")[1]))).convert("RGB"))
+
+
+def has_colour(picture, colour):
+    return ((picture == colour).all(axis=-1)).any()
+
+
+def test_vessel_dots_are_drawn_on_the_first_message_only_and_the_trace_follows_the_clean_slice(slices_dir, tmp_path):
+    from fissure_annotation.stack_agent import RidgePictures, VesselDots
+
+    blue = (40, 90, 255)
+    dots = VesselDots({z: [(250, 300 + z), (150, 200)] for z in STACK}, blue, radius_px=2)  # one dot right on the line
+    model = FakeModel(
+        [("zoom", {"slice": 8, "x0": 90, "y0": 280, "x1": 410, "y1": 340, "scale": 1})],
+        [("trace_points", {"fissures": [line_on(z) for z in STACK]})],
+        [("finish", {"summary": "x"})],
+    )
+    folder = StackFolder(root=tmp_path / "run")
+    run_stack(model, AgentSettings(), folder, slices_dir, STACK, step_mm=3.2, guides=dots, pictures=RidgePictures())
+    first_images = [decoded(p) for p in model.requests[0]["input"][0]["content"] if p["type"] == "input_image"]
+    assert all(has_colour(picture, blue) for picture in first_images)
+    assert (first_images[0][304, 250] == blue).all() and (first_images[0][200, 150] == blue).all()
+    assert not has_colour(decoded(model.requests[1]["input"][0]["output"][0]), blue)
+    overlays = [p for p in model.requests[2]["input"][0]["output"] if p["type"] == "input_image"]
+    assert not any(has_colour(decoded(p), blue) for p in overlays)
+    traced = read_gray(folder.mask_path(slices_dir / "slice_0008.png")) > 0
+    assert set(np.nonzero(traced)[0]) == {308}
+
+
+def test_layered_guides_draw_the_dots_on_top_of_the_band_outlines():
+    from fissure_annotation.stack_agent import LayeredGuides, VesselDots
+
+    bands = np.zeros((40, 40), dtype=np.uint8)
+    bands[10:30, 5:35] = 2
+    layered = LayeredGuides([OverviewGuides({0: bands}, {2: (255, 220, 0)}), VesselDots({0: [(5, 10)]}, (40, 90, 255), 1)])
+    picture = layered.overview(0, np.zeros((40, 40), dtype=np.uint8))
+    assert has_colour(picture, (255, 220, 0))
+    assert (picture[10, 5] == (40, 90, 255)).all()  # a band corner, under the dot
+
+
+def test_a_prompt_must_explain_the_vessel_dots_exactly_when_there_are_some(tmp_path):
+    from fissure_annotation.stack_agent import require_prompt_explains_dots
+
+    with_dots, without = tmp_path / "dots.txt", tmp_path / "plain.txt"
+    with_dots.write_text("BLUE DOTS mark vessels")
+    without.write_text("no dots here")
+    require_prompt_explains_dots(with_dots, True)
+    require_prompt_explains_dots(without, False)
+    require_prompt_explains_dots(None, False)
+    for prompt, dots in [(without, True), (with_dots, False), (None, True)]:
+        with pytest.raises(ValueError, match="vessel dots"):
+            require_prompt_explains_dots(prompt, dots)

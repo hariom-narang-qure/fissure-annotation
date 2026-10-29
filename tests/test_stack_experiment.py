@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import nibabel as nib
 import numpy as np
 import pytest
@@ -6,7 +8,8 @@ from fissure_annotation.imaging.slices import slice_view, write_slices
 from fissure_annotation.stack_experiment import Stack, StackExperiment, all_score_rows, run_stack_experiment
 from test_agent import FakeModel
 
-PRICES = {"default": {"input": 2.0, "cached_input": 0.1, "cache_write": 2.5, "output": 10.0}}
+PROMPTS = Path(__file__).parents[1] / "prompts"
+PRICES ={"default": {"input": 2.0, "cached_input": 0.1, "cache_write": 2.5, "output": 10.0}}
 
 
 @pytest.fixture
@@ -81,3 +84,68 @@ def test_hint_lobes_give_band_pngs_on_the_slice_grid(tmp_path, run_dir):
     assert hints.shape == ct.shape
     assert set(np.unique(hints)) == {0, 1}  # the test lobes are the left upper and lower, so only the left oblique band
     assert abs(int(np.nonzero(hints[:, 30])[0].mean()) - border_row(run_dir)) <= 1
+
+
+def vessel_mask_with_one_vessel(run_dir):
+    "a lung_vessels file with a 3 voxel wide artery along z at x 20, y 40, and an airway that must not get a dot"
+    labels = np.zeros((64, 64, 16), dtype=np.uint8)
+    labels[19:22, 39:42, :] = 3
+    labels[40:43, 10:13, :] = 1
+    path = run_dir / "lung_vessels.nii.gz"
+    nib.save(nib.Nifti1Image(labels, np.eye(4)), path)
+    return path
+
+
+def test_vessel_dots_put_one_dot_per_vessel_on_the_first_message(tmp_path, run_dir):
+    from test_stack_agent import decoded
+
+    from fissure_annotation.vessel_hints import read_vessel_cores
+
+    job = StackExperiment(
+        out_dir=tmp_path / "out",
+        stacks=[Stack(run_dir=run_dir, view="axial", centre=8, vessel_mask=vessel_mask_with_one_vessel(run_dir))],
+        stack_sizes=[1],
+        hint_band_mm=None,
+        vessel_dots={"min_area_px": 4},
+        prompt=PROMPTS / "stack_agent_ridge_vessel_dots.txt",
+        prices=PRICES,
+    )
+    model = FakeModel([("finish", {"summary": "none"})])
+    run_stack_experiment(job, model)
+    (core,) = read_vessel_cores(job.vessel_cores_dir(job.stacks[0]), [8])[8]
+    assert core == (64 - 1 - 20, 64 - 1 - 40)  # slice_view reverses both image axes
+    (picture,) = [decoded(p) for p in model.requests[0]["input"][0]["content"] if p["type"] == "input_image"]
+    blue = (picture == (40, 90, 255)).all(axis=-1)
+    assert blue[core[1], core[0]] and blue.sum() == 13  # one disc of radius 2
+    with pytest.raises(ValueError, match="another out_dir"):
+        run_stack_experiment(job.model_copy(update={"vessel_dots": job.vessel_dots.model_copy(update={"spacing_px": 10})}), model)
+
+
+def test_vessel_dots_need_a_vessel_mask_and_a_prompt_that_explains_them(tmp_path, run_dir):
+    common = dict(out_dir=tmp_path / "out", stack_sizes=[1], hint_band_mm=None, prices=PRICES)
+    with pytest.raises(ValueError, match="vessel_mask"):
+        StackExperiment(
+            stacks=[Stack(run_dir=run_dir, view="axial", centre=8)],
+            vessel_dots={},
+            prompt=PROMPTS / "stack_agent_ridge_vessel_dots.txt",
+            **common,
+        )
+    with pytest.raises(ValueError, match="vessel dots"):
+        StackExperiment(
+            stacks=[Stack(run_dir=run_dir, view="axial", centre=8, vessel_mask=run_dir / "v.nii.gz")],
+            vessel_dots={},
+            prompt=PROMPTS / "stack_agent_ridge_no_guides.txt",
+            **common,
+        )
+
+
+def test_the_vessel_dots_config_loads_with_the_ridge_pictures_no_guides_and_a_mask_per_stack(monkeypatch):
+    from fissure_annotation.settings import load_settings
+    from fissure_annotation.stack_agent import RidgePictures
+
+    monkeypatch.chdir(PROMPTS.parent)  # the config's paths are relative to the repo
+    job = load_settings(StackExperiment, ["--config", "configs/stack_agent_eval40_step3_ridge_vessel_dots.yaml"])
+    assert isinstance(job.pictures, RidgePictures) and not job.with_guides
+    assert job.vessel_dots.colour == (40, 90, 255) and job.vessel_dots.radius_px == 2
+    assert all(stack.vessel_mask.name == "lung_vessels.nii.gz" for stack in job.stacks)
+    assert all(stack.run_dir.parent.name == stack.vessel_mask.parent.name for stack in job.stacks)

@@ -15,6 +15,9 @@ How:
 4. The cost of each conversation is priced from its logged usage (pricing.py).
 5. Each stack's `hint_lobes` give the guides of its first message (fissure_hints.py), written once per scan and view.
    - With `hint_band_mm` unset there are no guides, and the prompt follows (stack_agent.prompt_for).
+6. With `vessel_dots` set, each stack's `vessel_mask` gives blue dots on the vessels of its first message (vessel_hints.py).
+   - The dots of each slice are written once per scan and view, like the bands.
+   - They are drawn on top of the guides, when there are both.
 """
 
 import csv
@@ -33,13 +36,17 @@ from fissure_annotation.settings import ExperimentSettings
 from fissure_annotation.slice_scores import SliceScore, score_run
 from fissure_annotation.stack_agent import (
     CtPictures,
+    LayeredGuides,
     NoGuides,
     Pictures,
     prompt_for,
+    require_prompt_explains_dots,
     StackFolder,
     StackLog,
+    VesselDots,
     run_stack,
 )
+from fissure_annotation.vessel_hints import VesselDotSettings, read_vessel_cores, write_vessel_cores
 from fissure_annotation.waypoints import RunFolder
 
 
@@ -48,6 +55,7 @@ class Stack(BaseModel):
     view: View
     centre: int
     hint_lobes: Path | None = None  # TotalSegmentator lobes on the scan's grid, for the guides; never the manual lobes that score the run
+    vessel_mask: Path | None = None  # TotalSegmentator lung_vessels file on the scan's grid, for the vessel dots
 
     @property
     def name(self) -> str:
@@ -76,6 +84,7 @@ class StackExperiment(ExperimentSettings):
     prompt: Path | None = None  # defaults to the prompt for the guides or for none, see stack_agent.prompt_for
     pictures: Pictures = Field(default_factory=CtPictures, discriminator="kind")  # what the agent looks at, the CT or its ridge map
     hint_band_mm: float | None = 5.0  # each side of a lobe boundary, so a band is about twice as wide; None runs without guides
+    vessel_dots: VesselDotSettings | None = None  # None runs without vessel dots
     prices: dict[str, TokenPrices]  # USD per million tokens, keyed by service tier: default, flex
 
     @model_validator(mode="after")
@@ -83,6 +92,13 @@ class StackExperiment(ExperimentSettings):
         if self.with_guides and any(stack.hint_lobes is None for stack in self.stacks):
             raise ValueError("guides need hint_lobes on every stack")
         prompt_for(self.prompt, self.with_guides)
+        return self
+
+    @model_validator(mode="after")
+    def vessel_dots_have_masks_and_a_matching_prompt(self):
+        if self.vessel_dots is not None and any(stack.vessel_mask is None for stack in self.stacks):
+            raise ValueError("vessel dots need vessel_mask on every stack")
+        require_prompt_explains_dots(self.prompt, self.vessel_dots is not None)
         return self
 
     @property
@@ -119,6 +135,10 @@ class StackExperiment(ExperimentSettings):
         "the band PNGs, one folder per scan shared by its stacks, with a subfolder per view"
         return self.out_dir / "fissure_bands" / stack.run_dir.parent.name / stack.view
 
+    def vessel_cores_dir(self, stack: Stack) -> Path:
+        "laid out like bands_dir"
+        return self.out_dir / "vessel_cores" / stack.run_dir.parent.name / stack.view
+
 
 def run_conversation(experiment: StackExperiment, conversation: Conversation, client) -> StackLog:
     stack = conversation.stack
@@ -136,17 +156,28 @@ def run_conversation(experiment: StackExperiment, conversation: Conversation, cl
 
 
 def guides_for(experiment: StackExperiment, stack: Stack, slice_indices: list[int]) -> NoGuides:
-    if not experiment.with_guides:
-        return NoGuides()
-    return overview_guides(experiment.bands_dir(stack), slice_indices)
+    "the lobe guides, then the vessel dots on top, each when the config asks for it"
+    layers: list[NoGuides] = []
+    if experiment.with_guides:
+        layers.append(overview_guides(experiment.bands_dir(stack), slice_indices))
+    if experiment.vessel_dots is not None:
+        layers.append(vessel_dots_for(experiment.vessel_dots, experiment.vessel_cores_dir(stack), slice_indices))
+    return LayeredGuides(layers)
+
+
+def vessel_dots_for(settings: VesselDotSettings, cores_dir: Path, slice_indices: list[int]) -> VesselDots:
+    return VesselDots(read_vessel_cores(cores_dir, slice_indices), settings.colour, settings.radius_px)
 
 
 def write_hints(experiment: StackExperiment) -> None:
     "before the conversations start, since threads writing the same hint folder would race"
-    if not experiment.with_guides:
-        return
     for stack in experiment.stacks:
-        write_hint_slices(stack.hint_lobes, stack.run_dir / "scan.nii.gz", experiment.bands_dir(stack).parent, [stack.view], experiment.hint_band_mm)
+        scan = stack.run_dir / "scan.nii.gz"
+        if experiment.with_guides:
+            write_hint_slices(stack.hint_lobes, scan, experiment.bands_dir(stack).parent, [stack.view], experiment.hint_band_mm)
+        if experiment.vessel_dots is not None:
+            cores_root = experiment.vessel_cores_dir(stack).parent
+            write_vessel_cores(stack.vessel_mask, scan, cores_root, [stack.view], experiment.vessel_dots.core_settings)
 
 
 def run_stack_experiment(experiment: StackExperiment, client) -> None:

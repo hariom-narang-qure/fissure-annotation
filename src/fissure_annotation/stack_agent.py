@@ -21,6 +21,9 @@ How:
    - The ridge map is what the tracer follows (imaging/tracing.py), so it shows what a trace will stick to.
    - Every picture the agent sees uses it: the first message, zooms and trace overlays.
    - The tracer always runs on the CT slice, since the ridge of a ridge map is not the ridge of the CT.
+7. With vessel dots, the first message also shows a blue dot on each vessel cross-section (`VesselDots`, vessel_hints.py).
+   - Like the guides, they are on the first message only, and the prompt must explain them (`require_prompt_explains_dots`).
+   - Dots and guides can be shown together (`LayeredGuides`).
 """
 
 import json
@@ -49,12 +52,14 @@ from fissure_annotation.imaging.slices import slice_file_name
 from fissure_annotation.imaging.guides import Colour, draw_band_outlines
 from fissure_annotation.imaging.ticks import crop_with_ticks
 from fissure_annotation.imaging.tracing import ridge_picture, trace_mask
+from fissure_annotation.imaging.vessels import Point, draw_dots
 from fissure_annotation.tools import STACK_TOOLS
 from fissure_annotation.waypoints import Fissure, RunFolder, SliceWaypoints
 
 DEFAULT_PROMPT = Path(__file__).parents[2] / "prompts" / "stack_agent.txt"
 NO_GUIDES_PROMPT = Path(__file__).parents[2] / "prompts" / "stack_agent_no_guides.txt"
 GUIDES_MARKER = "GUIDES:"  # the prompt section that explains the guides
+VESSEL_DOTS_MARKER = "BLUE DOTS"  # the prompt section that explains the vessel dots
 STACK_OVERLAY_SCALE = 2  # one overlay per slice comes back, so they are smaller than the one-slice agent's 3
 
 
@@ -94,6 +99,14 @@ def prompt_for(prompt: Path | None, with_guides: bool) -> Path:
     return prompt
 
 
+def require_prompt_explains_dots(prompt: Path | None, with_dots: bool) -> None:
+    "no default prompt explains the dots, so a run with dots names its prompt"
+    explains = prompt is not None and VESSEL_DOTS_MARKER in prompt.read_text()
+    if explains != with_dots:
+        name = "the default prompt" if prompt is None else prompt.name
+        raise ValueError(f"{name} {'does not explain' if with_dots else 'explains'} vessel dots, but the run has {'some' if with_dots else 'none'}")
+
+
 class CtPictures(BaseModel):
     kind: Literal["ct"] = "ct"
 
@@ -130,6 +143,31 @@ class OverviewGuides(NoGuides):
 
     def overview(self, slice_index: int, picture: np.ndarray) -> np.ndarray:
         return draw_band_outlines(picture, self.bands[slice_index], self.colour_of_fissure)
+
+
+class VesselDots(NoGuides):
+    """the first message shows a dot on the core of each vessel cross-section (vessel_hints.py)
+
+    Zooms and trace overlays stay clean, as for OverviewGuides.
+    """
+
+    def __init__(self, cores: dict[int, list[Point]], colour: Colour, radius_px: float):
+        self.cores, self.colour, self.radius_px = cores, colour, radius_px
+
+    def overview(self, slice_index: int, picture: np.ndarray) -> np.ndarray:
+        return draw_dots(picture, self.cores[slice_index], self.colour, self.radius_px)
+
+
+class LayeredGuides(NoGuides):
+    "several hints on the first message, drawn in order, so a later one is on top"
+
+    def __init__(self, layers: list[NoGuides]):
+        self.layers = layers
+
+    def overview(self, slice_index: int, picture: np.ndarray) -> np.ndarray:
+        for layer in self.layers:
+            picture = layer.overview(slice_index, picture)
+        return picture
 
 
 class StackSession:
