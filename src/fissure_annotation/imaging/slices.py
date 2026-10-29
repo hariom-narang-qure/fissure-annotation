@@ -68,3 +68,17 @@ def write_slices(nifti: Path, out_dir: Path, view: View = "axial") -> int:
             out_dir / slice_file_name(index),
         )
     return count
+
+
+def view_pixel_spacing(spacing_xyz: tuple[float, float, float], view: View) -> tuple[float, float]:
+    "rows then columns of a slice image, which slice_view makes the second then the first in-plane RAS axis"
+    first, second = (axis for axis in range(3) if axis != VIEW_AXIS[view])
+    return spacing_xyz[second], spacing_xyz[first]
+
+
+def write_label_slices(labels: UInt8[np.ndarray, "x y z"], out_dir: Path, view: View) -> int:
+    "labels in RAS, cut like write_slices but without smoothing or window, so each pixel keeps its label"
+    count = labels.shape[VIEW_AXIS[view]]
+    for index in range(count):
+        save_png(np.ascontiguousarray(slice_view(labels, view, index)), out_dir / slice_file_name(index))
+    return count
