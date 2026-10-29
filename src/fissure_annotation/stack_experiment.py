@@ -13,6 +13,8 @@ How:
 3. Each slice of each conversation is scored, and so is the baseline on the same slice.
    - `offset` is the slice's distance from the centre in slice steps, so sizes can be compared on the slices they share.
 4. The cost of each conversation is priced from its logged usage (pricing.py).
+5. A stack with `hint_lobes` gives the agent a band mask per slice (fissure_hints.py), written once per scan and view.
+   - Hints need a prompt that explains them, so `prompt` names the prompt file.
 """
 
 import csv
@@ -24,11 +26,12 @@ from pydantic import BaseModel, Field, field_validator
 from tqdm import tqdm
 
 from fissure_annotation.agent import AgentSettings
+from fissure_annotation.fissure_hints import write_hint_slices
 from fissure_annotation.imaging.slices import VIEW_AXIS, View
 from fissure_annotation.pricing import TokenPrices, cost_usd, prices_for
 from fissure_annotation.settings import ExperimentSettings
 from fissure_annotation.slice_scores import SliceScore, score_run
-from fissure_annotation.stack_agent import StackFolder, StackLog, run_stack
+from fissure_annotation.stack_agent import DEFAULT_PROMPT, StackFolder, StackLog, run_stack
 from fissure_annotation.waypoints import RunFolder
 
 
@@ -36,6 +39,7 @@ class Stack(BaseModel):
     run_dir: Path  # a finished scan run, with scan.nii.gz, lobes.nii.gz and fissures_work/<view>/
     view: View
     centre: int
+    hint_lobes: Path | None = None  # TotalSegmentator lobes on the scan's grid; the agent then gets a band mask per slice
 
     @property
     def name(self) -> str:
@@ -61,6 +65,8 @@ class StackExperiment(ExperimentSettings):
     workers: int = 16
     tolerance_mm: float = 3.0
     agent: AgentSettings = AgentSettings()
+    prompt: Path = DEFAULT_PROMPT  # the prompt with hints must explain the band mask, see prompts/stack_agent_hints.txt
+    hint_band_mm: float = 5.0  # each side of a lobe boundary, so a band is about twice as wide
     prices: dict[str, TokenPrices]  # USD per million tokens, keyed by service tier: default, flex
 
     @field_validator("stack_sizes")
@@ -89,6 +95,12 @@ class StackExperiment(ExperimentSettings):
     def is_done(self, conversation: Conversation) -> bool:
         return self.folder(conversation).stack_log_path(self.slice_indices(conversation)).exists()
 
+    def hints_dir(self, stack: Stack) -> Path | None:
+        "one folder per scan, shared by its stacks, with a subfolder per view"
+        if stack.hint_lobes is None:
+            return None
+        return self.out_dir / "hints" / stack.run_dir.parent.name / stack.view
+
 
 def step_mm(experiment: StackExperiment, stack: Stack) -> float:
     "the distance between neighbouring slices of the stack, along the axis the view steps through"
@@ -105,10 +117,21 @@ def run_conversation(experiment: StackExperiment, conversation: Conversation, cl
         stack.view_dir / "slices",
         experiment.slice_indices(conversation),
         step_mm(experiment, stack),
+        experiment.prompt,
+        experiment.hints_dir(stack),
     )
 
 
+def write_hints(experiment: StackExperiment) -> None:
+    "before the conversations start, since threads writing the same hint folder would race"
+    for stack in experiment.stacks:
+        hints_dir = experiment.hints_dir(stack)
+        if hints_dir is not None:
+            write_hint_slices(stack.hint_lobes, stack.run_dir / "scan.nii.gz", hints_dir.parent, [stack.view], experiment.hint_band_mm)
+
+
 def run_stack_experiment(experiment: StackExperiment, client) -> None:
+    write_hints(experiment)
     pending = [c for c in experiment.conversations() if not experiment.is_done(c)]
     with ThreadPoolExecutor(experiment.workers) as pool:
         results = pool.map(lambda c: run_conversation(experiment, c, client), pending)

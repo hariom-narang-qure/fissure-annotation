@@ -13,6 +13,7 @@ How:
    - The files are the ones the one-slice agent writes (waypoints.RunFolder), so the masks are scored and stacked the same way.
 4. One log covers the whole conversation, see `StackFolder.stack_log_path`.
    - It is kept apart from the per-slice logs, so one conversation is not priced once per slice.
+5. With hints, each slice is followed by its band mask, and a zoom returns the same crop of the mask too.
 """
 
 import json
@@ -42,7 +43,7 @@ from fissure_annotation.imaging.tracing import trace_mask
 from fissure_annotation.tools import STACK_TOOLS
 from fissure_annotation.waypoints import Fissure, RunFolder, SliceWaypoints
 
-INSTRUCTIONS_TEMPLATE = (Path(__file__).parents[2] / "prompts" / "stack_agent.txt").read_text()
+DEFAULT_PROMPT = Path(__file__).parents[2] / "prompts" / "stack_agent.txt"
 STACK_OVERLAY_SCALE = 2  # one overlay per slice comes back, so they are smaller than the one-slice agent's 3
 
 
@@ -62,8 +63,8 @@ class StackFolder(RunFolder):
         return self.root / "stack_logs" / f"stack_{slice_indices[0]:04d}_{slice_indices[-1]:04d}.json"
 
 
-def instructions_for(settings: AgentSettings, count: int, step_mm: float) -> str:
-    return INSTRUCTIONS_TEMPLATE.format(
+def instructions_for(settings: AgentSettings, prompt: Path, count: int, step_mm: float) -> str:
+    return prompt.read_text().format(
         count=count,
         view=settings.view,
         orientation=ORIENTATIONS[settings.view],
@@ -76,10 +77,21 @@ def instructions_for(settings: AgentSettings, count: int, step_mm: float) -> str
 class StackSession:
     "the tools of one stack, with the state they share (the slice images and the trace count)"
 
-    def __init__(self, settings: AgentSettings, folder: StackFolder, slices_dir: Path, slice_indices: list[int]):
+    def __init__(
+        self,
+        settings: AgentSettings,
+        folder: StackFolder,
+        slices_dir: Path,
+        slice_indices: list[int],
+        hints_dir: Path | None = None,
+    ):
+        "hints_dir holds a band mask PNG per slice on the pixels of the slice (fissure_hints.py), or None for no hints"
         self.settings, self.folder, self.slice_indices = settings, folder, slice_indices
         self.slice_pngs = {z: slices_dir / slice_file_name(z) for z in slice_indices}
         self.images: dict[int, UInt8[np.ndarray, "h w"]] = {z: read_gray(png) for z, png in self.slice_pngs.items()}
+        self.hints: dict[int, UInt8[np.ndarray, "h w"]] = (
+            {} if hints_dir is None else {z: read_gray(hints_dir / slice_file_name(z)) for z in slice_indices}
+        )
         self.traces = 0
 
     def run_tool(self, name: str, arguments: dict) -> list[dict]:
@@ -99,7 +111,10 @@ class StackSession:
         box = (max(0, x0), max(0, y0), min(width, x1), min(height, y1))
         if box[2] - box[0] < MIN_CROP_PX or box[3] - box[1] < MIN_CROP_PX:
             return [text("crop too small")]
-        return [image(crop_with_ticks(picture, box, scale))]
+        crops = [image(crop_with_ticks(picture, box, scale))]
+        if slice in self.hints:
+            crops += [text("The band mask of the same crop:"), image(crop_with_ticks(self.hints[slice], box, scale))]
+        return crops
 
     def fissures_by_slice(self, fissures: list[dict]) -> dict[int, list[Fissure]]:
         "every slice of the stack gets an entry, an empty one when the call has no fissure on it"
@@ -146,6 +161,8 @@ def first_input(session: StackSession) -> list[dict]:
     content = [text(f"{len(session.slice_indices)} {session.settings.view} slices, each {width}x{height} px, in order.")]
     for z in session.slice_indices:
         content += [text(f"Slice {z}:"), image(Image.fromarray(session.images[z]))]
+        if z in session.hints:
+            content += [text(f"Band mask of slice {z}:"), image(Image.fromarray(session.hints[z]))]
     return [{"role": "user", "content": content}]
 
 
@@ -156,9 +173,11 @@ def run_stack(
     slices_dir: Path,
     slice_indices: list[int],
     step_mm: float,
+    prompt: Path = DEFAULT_PROMPT,
+    hints_dir: Path | None = None,
 ) -> StackLog:
-    session = StackSession(settings, folder, slices_dir, slice_indices)
-    instructions = instructions_for(settings, len(slice_indices), step_mm)
+    session = StackSession(settings, folder, slices_dir, slice_indices, hints_dir)
+    instructions = instructions_for(settings, prompt, len(slice_indices), step_mm)
     log = StackLog(slice_indices=slice_indices, summary=None, traces=0, steps=0, input_tokens=0, output_tokens=0, calls=[])
 
     def respond(**request):

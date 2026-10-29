@@ -71,3 +71,27 @@ def lobe_boundary_band(
     for lobe_a, lobe_b in FISSURE_LOBE_PAIRS:
         band |= interface_between(lobes, lobe_a, lobe_b, spacing_mm, band_mm)
     return band
+
+
+# One label per fissure, for hints that name the fissure a band belongs to.
+# The right oblique fissure separates the lower lobe from both the upper and the middle lobe.
+LEFT_OBLIQUE, RIGHT_OBLIQUE, RIGHT_HORIZONTAL = 1, 2, 3
+FISSURE_PAIRS_BY_LABEL = {
+    LEFT_OBLIQUE: [(LEFT_UPPER, LEFT_LOWER)],
+    RIGHT_OBLIQUE: [(RIGHT_UPPER, RIGHT_LOWER), (RIGHT_MIDDLE, RIGHT_LOWER)],
+    RIGHT_HORIZONTAL: [(RIGHT_UPPER, RIGHT_MIDDLE)],
+}
+
+
+def fissure_band_labels(
+    lobes: Integer[np.ndarray, "x y z"],
+    spacing_mm: Spacing,
+    band_mm: float,
+) -> Integer[np.ndarray, "x y z"]:
+    "where two bands overlap, near the junction of the right fissures, the first label in FISSURE_PAIRS_BY_LABEL wins"
+    labels = np.zeros(lobes.shape, dtype=np.uint8)
+    for label, pairs in FISSURE_PAIRS_BY_LABEL.items():
+        for lobe_a, lobe_b in pairs:
+            band = interface_between(lobes, lobe_a, lobe_b, spacing_mm, band_mm)
+            labels[band & (labels == 0)] = label
+    return labels

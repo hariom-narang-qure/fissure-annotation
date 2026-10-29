@@ -75,3 +75,21 @@ def test_zoom_needs_a_slice_of_the_stack(slices_dir, tmp_path):
     )
     run(model, slices_dir, tmp_path)
     assert model.requests[1]["input"][0]["output"][0]["type"] == "input_image"
+
+
+def test_with_hints_each_slice_is_followed_by_its_band_mask_and_zooms_crop_it_too(slices_dir, tmp_path):
+    hints_dir = tmp_path / "hints"
+    for z in STACK:
+        save_png(np.zeros((512, 512), dtype=np.uint8), hints_dir / f"slice_{z:04d}.png")
+    model = FakeModel(
+        [("zoom", {"slice": 8, "x0": 0, "y0": 200, "x1": 200, "y1": 400, "scale": 2})],
+        [("finish", {"summary": "x"})],
+    )
+    folder = StackFolder(root=tmp_path / "run")
+    run_stack(model, AgentSettings(), folder, slices_dir, STACK, step_mm=3.2, hints_dir=hints_dir)
+    content = model.requests[0]["input"][0]["content"]
+    labels = [part["text"] for part in content if part["type"] == "input_text"]
+    assert labels[1:3] == ["Slice 4:", "Band mask of slice 4:"]
+    assert sum(part["type"] == "input_image" for part in content) == 6
+    zoom_reply = model.requests[1]["input"][0]["output"]
+    assert sum(part["type"] == "input_image" for part in zoom_reply) == 2

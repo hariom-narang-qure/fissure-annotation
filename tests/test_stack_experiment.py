@@ -63,3 +63,21 @@ def test_a_finished_conversation_is_not_run_again(tmp_path, run_dir):
 def test_even_stack_sizes_are_refused(tmp_path, run_dir):
     with pytest.raises(ValueError):
         experiment(tmp_path, run_dir, [2])
+
+
+def test_hint_lobes_give_band_mask_pngs_on_the_slice_grid(tmp_path, run_dir):
+    from fissure_annotation.imaging.png import read_gray
+
+    job = StackExperiment(
+        out_dir=tmp_path / "out",
+        stacks=[Stack(run_dir=run_dir, view="axial", centre=8, hint_lobes=run_dir / "lobes.nii.gz")],
+        stack_sizes=[1],
+        prices=PRICES,
+    )
+    model = FakeModel([("finish", {"summary": "none"})])
+    run_stack_experiment(job, model)
+    hints = read_gray(job.hints_dir(job.stacks[0]) / "slice_0008.png")
+    ct = read_gray(run_dir / "fissures_work" / "axial" / "slices" / "slice_0008.png")
+    assert hints.shape == ct.shape
+    assert set(np.unique(hints)) == {0, 85}  # the test lobes are the left upper and lower, so only the left oblique band
+    assert abs(int(np.nonzero(hints[:, 30])[0].mean()) - border_row(run_dir)) <= 1
