@@ -29,6 +29,11 @@ def ridge_strength(image: UInt8[np.ndarray, "h w"]) -> Float[np.ndarray, "h w"]:
     return np.clip(-laplacian, 0, None)
 
 
+def ridge_picture(image: UInt8[np.ndarray, "h w"], display_max: float) -> UInt8[np.ndarray, "h w"]:
+    "the ridge as a grey picture, white from display_max up, so faint ridges are not lost under vessels"
+    return (np.clip(ridge_strength(image) / display_max, 0, 1) * 255).astype(np.uint8)
+
+
 def path_cost(image: UInt8[np.ndarray, "h w"]) -> Float[np.ndarray, "h w"]:
     return 1 / (1 + np.clip(ridge_strength(image), 0, RIDGE_CAP) / RIDGE_SCALE) ** 2
 

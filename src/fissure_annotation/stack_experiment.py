@@ -32,7 +32,9 @@ from fissure_annotation.pricing import TokenPrices, cost_usd, prices_for
 from fissure_annotation.settings import ExperimentSettings
 from fissure_annotation.slice_scores import SliceScore, score_run
 from fissure_annotation.stack_agent import (
+    CtPictures,
     NoGuides,
+    Pictures,
     prompt_for,
     StackFolder,
     StackLog,
@@ -72,6 +74,7 @@ class StackExperiment(ExperimentSettings):
     tolerance_mm: float = 3.0
     agent: AgentSettings = AgentSettings()
     prompt: Path | None = None  # defaults to the prompt for the guides or for none, see stack_agent.prompt_for
+    pictures: Pictures = Field(default_factory=CtPictures, discriminator="kind")  # what the agent looks at, the CT or its ridge map
     hint_band_mm: float | None = 5.0  # each side of a lobe boundary, so a band is about twice as wide; None runs without guides
     prices: dict[str, TokenPrices]  # USD per million tokens, keyed by service tier: default, flex
 
@@ -128,6 +131,7 @@ def run_conversation(experiment: StackExperiment, conversation: Conversation, cl
         slice_step_mm(stack.run_dir / "scan.nii.gz", stack.view, experiment.slice_step),
         prompt_for(experiment.prompt, experiment.with_guides),
         guides_for(experiment, stack, experiment.slice_indices(conversation)),
+        experiment.pictures,
     )
 
 
