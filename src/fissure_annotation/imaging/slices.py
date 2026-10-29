@@ -68,3 +68,9 @@ def write_slices(nifti: Path, out_dir: Path, view: View = "axial") -> int:
             out_dir / slice_file_name(index),
         )
     return count
+
+
+def view_pixel_spacing(spacing_xyz: tuple[float, float, float], view: View) -> tuple[float, float]:
+    "rows then columns of a slice image, which slice_view makes the second then the first in-plane RAS axis"
+    first, second = (axis for axis in range(3) if axis != VIEW_AXIS[view])
+    return spacing_xyz[second], spacing_xyz[first]
