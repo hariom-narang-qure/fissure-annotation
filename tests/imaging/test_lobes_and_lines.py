@@ -123,3 +123,17 @@ def test_a_line_with_a_short_tail_outside_the_region_is_kept_whole():
     mask[2:50, 2, 2] = True  # 38 of 48 voxels inside, the tail goes beyond the region
     kept, removed = keep_lines_mostly_inside(mask, region, min_share=0.5)
     assert (kept == mask).all() and not removed.any()
+
+
+def test_fissure_band_labels_name_each_fissure_and_keep_the_band_width():
+    from fissure_annotation.imaging.lobes import RIGHT_HORIZONTAL, RIGHT_OBLIQUE, fissure_band_labels
+
+    lobes = np.zeros((10, 10, 30), dtype=np.uint8)
+    lobes[:, :, 0:10] = 14  # right lower
+    lobes[:, :, 10:20] = 13  # right middle
+    lobes[:, :, 20:30] = 12  # right upper
+    labels = fissure_band_labels(lobes, (1.0, 1.0, 1.0), band_mm=2.0)
+    column = labels[5, 5, :]
+    assert set(np.nonzero(column == RIGHT_OBLIQUE)[0]) == {8, 9, 10, 11}
+    assert set(np.nonzero(column == RIGHT_HORIZONTAL)[0]) == {18, 19, 20, 21}
+    assert column[0] == 0 and column[15] == 0
