@@ -7,6 +7,7 @@ import pytest
 from fissure_annotation.annotators import StackAnnotator, stacks_of
 from fissure_annotation.fissure_mask import FissureMaskJob, make_fissure_mask
 from fissure_annotation.imaging.lobes import LEFT_LOWER, LEFT_UPPER
+from fissure_annotation.stack_agent import DEFAULT_PROMPT, NO_GUIDES_PROMPT
 from test_agent import FakeModel
 from test_fissure_mask import scan_with_a_bright_line
 
@@ -51,12 +52,14 @@ def scan_and_lobes(tmp_path):
 
 def stack_job(tmp_path, scan, lobes, **settings) -> FissureMaskJob:
     return FissureMaskJob(
-        nifti=scan,
-        mask_path=tmp_path / "out" / "fissures.nii.gz",
-        lobes=lobes,
-        workers=1,
-        annotator=StackAnnotator(size=3),
-        **settings,
+        **{
+            "nifti": scan,
+            "mask_path": tmp_path / "out" / "fissures.nii.gz",
+            "lobes": lobes,
+            "workers": 1,
+            "annotator": StackAnnotator(size=3),
+            **settings,
+        }
     )
 
 
@@ -93,3 +96,20 @@ def test_a_config_picks_the_annotator_by_kind(tmp_path):
         {"nifti": tmp_path / "a.nii.gz", "mask_path": tmp_path / "m.nii.gz", "annotator": {"kind": "stack", "size": 3}}
     )
     assert isinstance(job.annotator, StackAnnotator) and job.annotator.size == 3
+
+
+def test_without_guides_the_stack_annotator_needs_no_lobes_and_its_prompt_does_not_mention_guides(tmp_path, scan_and_lobes):
+    scan, _ = scan_and_lobes
+    model = TraceEverySliceModel()
+    job = stack_job(tmp_path, scan, None, annotator=StackAnnotator(size=3, hint_band_mm=None))
+    make_fissure_mask(job, model)
+    assert len(model.stacks) == 3 and "GUIDES" not in model.instructions[0]
+    assert not (job.work_folder / "fissure_bands").exists()
+    assert np.asarray(nib.load(job.mask_path).dataobj).any()
+
+
+def test_a_prompt_that_does_not_match_the_guides_is_refused():
+    with pytest.raises(ValueError, match="explains guides"):
+        StackAnnotator(hint_band_mm=None, prompt=DEFAULT_PROMPT)
+    with pytest.raises(ValueError, match="does not explain"):
+        StackAnnotator(prompt=NO_GUIDES_PROMPT)

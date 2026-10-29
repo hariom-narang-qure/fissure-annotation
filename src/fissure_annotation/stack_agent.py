@@ -15,6 +15,8 @@ How:
    - It is kept apart from the per-slice logs, so one conversation is not priced once per slice.
 5. With guides, the first message shows the dashed edges of a band around each fissure (`OverviewGuides`).
    - The tracer always follows the ridge of the clean slice, never a drawn guide.
+   - Guides need a lobe segmentation, so they are optional.
+   - Without them the agent gets a prompt that does not mention them (`prompt_for`).
 """
 
 import json
@@ -46,6 +48,8 @@ from fissure_annotation.tools import STACK_TOOLS
 from fissure_annotation.waypoints import Fissure, RunFolder, SliceWaypoints
 
 DEFAULT_PROMPT = Path(__file__).parents[2] / "prompts" / "stack_agent.txt"
+NO_GUIDES_PROMPT = Path(__file__).parents[2] / "prompts" / "stack_agent_no_guides.txt"
+GUIDES_MARKER = "GUIDES:"  # the prompt section that explains the guides
 STACK_OVERLAY_SCALE = 2  # one overlay per slice comes back, so they are smaller than the one-slice agent's 3
 
 
@@ -74,6 +78,15 @@ def instructions_for(settings: AgentSettings, prompt: Path, count: int, step_mm:
         lung_hint=AXIAL_LUNG_HINT if settings.view == "axial" else "",
         max_traces=settings.max_traces,
     )
+
+
+def prompt_for(prompt: Path | None, with_guides: bool) -> Path:
+    "the default prompt follows the guides; a given prompt must explain guides exactly when there are some"
+    if prompt is None:
+        return DEFAULT_PROMPT if with_guides else NO_GUIDES_PROMPT
+    if (GUIDES_MARKER in prompt.read_text()) != with_guides:
+        raise ValueError(f"{prompt.name} {'does not explain' if with_guides else 'explains'} guides, but the run has {'some' if with_guides else 'none'}")
+    return prompt
 
 
 class NoGuides:

@@ -11,6 +11,7 @@ How:
      - The last stack of a view can be smaller.
      - The pipeline always annotates the last slice, so the last stack can have an uneven gap. It is outside the lungs.
   2. The guides come from automatic lobes on the scan's grid (fissure_hints.py), never from manual lobes.
+     - They are optional: with `hint_band_mm` unset there are no guides, no lobes are needed, and the prompt follows.
   3. A stack with a log is not run again, so a stopped run is finished by running it again.
 - Both write the files of waypoints.RunFolder, so the masks are read the same way.
 """
@@ -20,7 +21,7 @@ from pathlib import Path
 from typing import Literal
 
 import nibabel as nib
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, model_validator
 from tqdm import tqdm
 
 from fissure_annotation.agent import AgentSettings
@@ -28,7 +29,7 @@ from fissure_annotation.experiment import WaypointExperiment, run_slices
 from fissure_annotation.fissure_hints import OUTLINE_COLOUR_OF_FISSURE, write_hint_slices
 from fissure_annotation.imaging.png import read_gray
 from fissure_annotation.imaging.slices import VIEW_AXIS, View, slice_file_name
-from fissure_annotation.stack_agent import DEFAULT_PROMPT, OverviewGuides, StackFolder, run_stack
+from fissure_annotation.stack_agent import NoGuides, OverviewGuides, StackFolder, prompt_for, run_stack
 
 
 class ViewWork(BaseModel):
@@ -95,21 +96,30 @@ def stacks_of(slice_indices: list[int], size: int) -> list[list[int]]:
 class StackAnnotator(BaseModel):
     kind: Literal["stack"] = "stack"
     size: int = Field(default=5, ge=1)
-    prompt: Path = DEFAULT_PROMPT  # it must explain the guides, see prompts/stack_agent.txt
-    hint_band_mm: float = 5.0  # each side of a lobe boundary, so a band is about twice as wide
+    hint_band_mm: float | None = 5.0  # each side of a lobe boundary, so a band is about twice as wide; None runs without guides
+    prompt: Path | None = None  # defaults to the prompt for the guides or for none, see stack_agent.prompt_for
 
-    @field_validator("prompt")
-    @classmethod
-    def prompt_exists(cls, prompt: Path) -> Path:
-        if not prompt.exists():
-            raise ValueError(f"no prompt at {prompt}")
-        return prompt
+    @model_validator(mode="after")
+    def prompt_matches_the_guides(self):
+        "fails when the config is read, before any call"
+        prompt_for(self.prompt, self.with_guides)
+        return self
+
+    @property
+    def with_guides(self) -> bool:
+        return self.hint_band_mm is not None
+
+    @property
+    def prompt_path(self) -> Path:
+        return prompt_for(self.prompt, self.with_guides)
 
     def bands_root(self, work: ViewWork) -> Path:
         "next to the view folders, with a subfolder per view, as write_hint_slices lays them out"
         return work.view_dir.parent / "fissure_bands"
 
     def write_guides(self, work: ViewWork) -> None:
+        if not self.with_guides:
+            return
         if work.lobes is None:
             raise ValueError("the stack annotator draws its guides from lobes, and the job has none")
         write_hint_slices(work.lobes, work.scan, self.bands_root(work), [work.view], self.hint_band_mm)
@@ -125,9 +135,12 @@ class StackAnnotator(BaseModel):
             work.slices_dir,
             stack,
             slice_step_mm(work.scan, work.view, work.slice_step),
-            self.prompt,
-            overview_guides(self.bands_root(work) / work.view, stack),
+            self.prompt_path,
+            self.guides(work, stack),
         )
+
+    def guides(self, work: ViewWork, stack: list[int]) -> NoGuides:
+        return overview_guides(self.bands_root(work) / work.view, stack) if self.with_guides else NoGuides()
 
     def annotate(self, work: ViewWork, client) -> None:
         self.write_guides(work)
