@@ -1,0 +1,19 @@
+# Step 2 of the stack agent test (https://claude.ai/artifact/3wbEVy3bgTLqv37X9rtrkX): 40 slices, not hand-picked.
+# 8 stacks of 5, drawn at random (seed 0), stratified: 2 per view of locca_covid_013, 1 per view of lung_002 with a baseline.
+# Size 5 won the sweep (configs/stack_sweep.yaml) on the stacks other than coronal 344.
+out_dir: work/stack_agent/eval40
+stack_sizes: [5]
+slice_step: 4
+repeats: 2
+stacks:
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 140}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 272}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 184}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 288}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 164}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 380}
+  - {run_dir: work/scans/lung_002/flex_step4, view: axial, centre: 116}
+  - {run_dir: work/scans/lung_002/flex_step4, view: coronal, centre: 212}
+prices:
+  default: {input: 2.00, cached_input: 0.10, cache_write: 2.50, output: 10.00}
+  flex: {input: 1.00, cached_input: 0.05, cache_write: 1.25, output: 5.00}

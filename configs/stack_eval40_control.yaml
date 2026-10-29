@@ -1,0 +1,51 @@
+# Step 2 of the stack agent test (https://claude.ai/artifact/3wbEVy3bgTLqv37X9rtrkX): 40 slices, not hand-picked.
+# 8 stacks of 5, drawn at random (seed 0), stratified: 2 per view of locca_covid_013, 1 per view of lung_002 with a baseline.
+# The control: the stack prompt on each of the same 40 slices alone. Size 5 won the sweep (configs/stack_sweep.yaml) on the stacks other than coronal 344.
+out_dir: work/stack_agent/eval40_control
+stack_sizes: [1]
+slice_step: 4
+repeats: 2
+stacks:
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 132}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 136}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 140}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 144}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 148}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 264}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 268}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 272}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 276}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 280}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 176}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 180}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 184}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 188}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 192}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 280}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 284}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 288}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 292}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 296}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 156}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 160}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 164}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 168}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 172}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 372}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 376}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 380}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 384}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 388}
+  - {run_dir: work/scans/lung_002/flex_step4, view: axial, centre: 108}
+  - {run_dir: work/scans/lung_002/flex_step4, view: axial, centre: 112}
+  - {run_dir: work/scans/lung_002/flex_step4, view: axial, centre: 116}
+  - {run_dir: work/scans/lung_002/flex_step4, view: axial, centre: 120}
+  - {run_dir: work/scans/lung_002/flex_step4, view: axial, centre: 124}
+  - {run_dir: work/scans/lung_002/flex_step4, view: coronal, centre: 204}
+  - {run_dir: work/scans/lung_002/flex_step4, view: coronal, centre: 208}
+  - {run_dir: work/scans/lung_002/flex_step4, view: coronal, centre: 212}
+  - {run_dir: work/scans/lung_002/flex_step4, view: coronal, centre: 216}
+  - {run_dir: work/scans/lung_002/flex_step4, view: coronal, centre: 220}
+prices:
+  default: {input: 2.00, cached_input: 0.10, cache_write: 2.50, output: 10.00}
+  flex: {input: 1.00, cached_input: 0.05, cache_write: 1.25, output: 5.00}
