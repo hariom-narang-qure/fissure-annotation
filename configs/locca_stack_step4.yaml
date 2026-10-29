@@ -1,0 +1,19 @@
+# The stack agent over the 5 LOCCA cases of locca_flex_step4.yaml, to compare its sheets with the one-slice agent's.
+# Each conversation sees 5 neighbouring slices, 4 apart, with guides from the TotalSegmentator lobes.
+# - On 40 LOCCA slices, slices 3 apart scored the same as 4 apart, so the cheaper step is kept.
+# Post-processing uses the manual LOCCA lobes, which never reach the guides.
+# - work/datasets/locca/prepare_flex_step4.py puts them in each run folder: pass it this config.
+csv: configs/locca_flex_step4_cases.csv
+uid_column: case_id
+scans_dir: /home/hariom.narang/fissure-annotation/work/datasets/locca/store  # absolute, since the run folder links its scan to it
+out_root: work/scans
+run_name: stack_step4
+slice_step: 4
+views: [axial, coronal, sagittal]
+workers: 8  # stacks in flight, each with 5 slices
+annotator:
+  kind: stack
+  size: 5
+totalsegmentator:
+  command: [/home/hariom.narang/fissure-work-bak/1.2.392.200036.9116.2.6.1.54365.1690017023.1783390643.994211/fusion/tools/ts_venv/bin/python, -m, totalsegmentator.bin.TotalSegmentator]
+  gpu_index: 0
