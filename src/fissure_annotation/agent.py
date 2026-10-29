@@ -193,11 +193,12 @@ def instructions_for(view: View) -> str:
     )
 
 
-def request_settings(settings: AgentSettings) -> dict:
+def request_settings(settings: AgentSettings, instructions: str | None = None, tools: list[dict] = TOOLS) -> dict:
+    "instructions and tools default to the one-slice agent's, another variant passes its own"
     request = dict(
         model=settings.model,
-        instructions=instructions_for(settings.view),
-        tools=TOOLS,
+        instructions=instructions_for(settings.view) if instructions is None else instructions,
+        tools=tools,
         reasoning={"effort": settings.reasoning_effort},
         max_output_tokens=settings.max_output_tokens,
     )
@@ -215,9 +216,11 @@ def report_retry(settings: AgentSettings, slice_index: int):
     return report
 
 
-def create_response(client, settings: AgentSettings, slice_index: int, **request):
+def create_response(
+    client, settings: AgentSettings, slice_index: int, instructions: str | None = None, tools: list[dict] = TOOLS, **request
+):
     return with_retries(
-        lambda: client.responses.create(**request_settings(settings), **request),
+        lambda: client.responses.create(**request_settings(settings, instructions, tools), **request),
         settings.retries,
         settings.retry_wait_seconds,
         settings.capacity_wait_seconds,
