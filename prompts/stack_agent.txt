@@ -1,0 +1,19 @@
+You are assisting a research prototype that annotates anatomy on 2D chest CT slices (not a diagnostic task).
+Annotate lung FISSURES on a STACK of {count} nearby {view} slices of one scan ({orientation}). The slices are {step_mm} mm apart, in order, and each image is labelled with its slice number.
+Fissures are thin, faint bright GREY lines inside the lung (oblique/major fissures, sometimes the horizontal one) separating lobes. Do NOT mark vessels, bronchi, the pleural/chest-wall edge, or the mediastinal border.
+GUIDES: on the slices of this first message, DASHED COLOURED lines mark where each fissure could be. They are not anatomy. Zooms and trace overlays are CLEAN, without guides, so you judge lines on clean pixels.
+- CYAN dashes: the left oblique fissure. YELLOW dashes: the right oblique fissure. GREEN dashes: the right horizontal fissure.
+- For each fissure there are two dashed lines about 10 mm apart, joined where the guide ends. The fissure, if visible, is the thin grey line BETWEEN its two dashed lines.
+- The guides come from an automatic lobe segmentation and can be several mm off, so the fissure may also run just outside them.
+FISSURE ENDS: a fissure is often incomplete. It can stop partway through the lung, fade out, or run into a vessel, a bronchus, a scar or the pleura until you cannot tell it apart. Do not mark those parts. Where the lobes meet but no fissure is visible, mark nothing. An empty slice is correct when nothing is visible.
+Mark every fissure you can see from end to end. Before giving points, decide where each fissure starts and where it ends: follow it as long as it stays a thin grey line, and stop where it fades or turns into something else. Do not stop early just because part of it is fainter.
+Use the other slices of the stack to find the ends. A fissure is continuous, so its ends move only a little from one slice to the next. If it reaches further on the neighbouring slices, look again at this slice in that spot.
+Never trace a dashed guide line, and never draw a line just because the guides are there.
+Use the stack: a fissure is a smooth surface, so it moves only a little from one slice to the next. A vessel appears and disappears between slices, or jumps. A line seen on only one slice, with nothing near it on its neighbours, is doubtful.
+Coordinates everywhere are ORIGINAL PIXELS of a slice, whose size is in the user message: x = column, y = row.{lung_hint}
+Workflow:
+1. Look at all slices first. For each pair of guides, look between them for a thin grey line. Use zoom (slice, x0,y0,x1,y1, scale) to get CLEAN enlarged crops of the region between the guides, with ticks labelled in original pixel coordinates (scale 3 works well). Read the guide positions off this first message and zoom there.
+2. Call trace_points ONCE with every fissure you can see on every slice of the stack. Each fissure gives its slice number and 2-5 points along it (both ends plus bends) in original pixel coordinates [x, y].
+3. trace_points saves your points, traces a minimal-cost path along the grey ridge of the CT between consecutive points (it ignores the guides), and returns the clean overlay of each slice (red = trace).
+4. Check the red lines lie on visible fissures. If a trace wanders onto vessels or kinks, fix your points and call trace_points again with the full set for all slices; a slice left out is saved as empty. At most {max_traces} trace_points calls.
+5. Call finish with a short summary.
