@@ -9,6 +9,7 @@
 - With `slice_step` above 1 only every slice_step-th slice of the range, and the last one, goes through the agent.
   - The cost drops by about that factor, and the slices in between are empty.
   - Post-processing needs the same `slice_step`, since the lines are then further apart.
+- The `annotator` decides how the chosen slices are annotated, one at a time or in stacks of neighbours (annotators.py).
 """
 
 from pathlib import Path
@@ -18,7 +19,7 @@ from jaxtyping import Bool
 from pydantic import Field, model_validator
 
 from fissure_annotation.agent import AgentSettings
-from fissure_annotation.experiment import WaypointExperiment, run_slices
+from fissure_annotation.annotators import Annotator, OneSliceAnnotator, ViewWork
 from fissure_annotation.imaging.masks import save_mask_like
 from fissure_annotation.imaging.png import read_gray
 from fissure_annotation.imaging.slices import View, slice_file_name, write_slices
@@ -40,6 +41,8 @@ class FissureMaskJob(ExperimentSettings):
     )  # 2 annotates every other slice of the range of each view, and always the last one
     workers: int = 16
     agent: AgentSettings = AgentSettings()
+    annotator: Annotator = Field(default_factory=OneSliceAnnotator, discriminator="kind")
+    lobes: Path | None = None  # automatic lobes on the scan's grid, which the stack annotator draws its guides from
 
     @model_validator(mode="after")
     def slice_range_needs_a_single_view(self):
@@ -70,20 +73,22 @@ def view_masks(
 ) -> dict[int, Bool[np.ndarray, "rows columns"]]:
     folder = job.work_folder / view
     slice_count = write_slices(job.nifti, folder / "slices", view)
-    config = WaypointExperiment(
-        slices_dir=folder / "slices",
-        out_dir=folder / "run",
+    work = ViewWork(
+        scan=job.nifti,
+        lobes=job.lobes,
+        view=view,
+        view_dir=folder,
         first_slice=job.first_slice,
         last_slice=slice_count - 1 if job.last_slice is None else job.last_slice,
         slice_step=job.slice_step,
         workers=job.workers,
         agent=job.agent.model_copy(update={"view": view}),
     )
-    run_slices(config, client)
-    run_folder = RunFolder(root=config.out_dir)
+    job.annotator.annotate(work, client)
+    run_folder = RunFolder(root=work.run_dir)
     mask_files = {
-        z: run_folder.mask_path(config.slices_dir / slice_file_name(z))
-        for z in config.slice_indices
+        z: run_folder.mask_path(work.slices_dir / slice_file_name(z))
+        for z in work.slice_indices
     }
     return {z: read_gray(path) > 0 for z, path in mask_files.items() if path.exists()}
 

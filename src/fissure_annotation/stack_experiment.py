@@ -14,27 +14,28 @@ How:
    - `offset` is the slice's distance from the centre in slice steps, so sizes can be compared on the slices they share.
 4. The cost of each conversation is priced from its logged usage (pricing.py).
 5. Each stack's `hint_lobes` give the guides of its first message (fissure_hints.py), written once per scan and view.
+   - With `hint_band_mm` unset there are no guides, and the prompt follows (stack_agent.prompt_for).
 """
 
 import csv
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import nibabel as nib
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from tqdm import tqdm
 
 from fissure_annotation.agent import AgentSettings
-from fissure_annotation.fissure_hints import OUTLINE_COLOUR_OF_FISSURE, write_hint_slices
-from fissure_annotation.imaging.png import read_gray
-from fissure_annotation.imaging.slices import slice_file_name
-from fissure_annotation.imaging.slices import VIEW_AXIS, View
+from fissure_annotation.annotators import overview_guides, slice_step_mm
+from fissure_annotation.fissure_hints import write_hint_slices
+from fissure_annotation.imaging.slices import View
 from fissure_annotation.pricing import TokenPrices, cost_usd, prices_for
 from fissure_annotation.settings import ExperimentSettings
 from fissure_annotation.slice_scores import SliceScore, score_run
 from fissure_annotation.stack_agent import (
-    DEFAULT_PROMPT,
-    OverviewGuides,
+    CtPictures,
+    NoGuides,
+    Pictures,
+    prompt_for,
     StackFolder,
     StackLog,
     run_stack,
@@ -46,7 +47,7 @@ class Stack(BaseModel):
     run_dir: Path  # a finished scan run, with scan.nii.gz, lobes.nii.gz and fissures_work/<view>/
     view: View
     centre: int
-    hint_lobes: Path  # TotalSegmentator lobes on the scan's grid, for the guides; never the manual lobes that score the run
+    hint_lobes: Path | None = None  # TotalSegmentator lobes on the scan's grid, for the guides; never the manual lobes that score the run
 
     @property
     def name(self) -> str:
@@ -72,9 +73,21 @@ class StackExperiment(ExperimentSettings):
     workers: int = 16
     tolerance_mm: float = 3.0
     agent: AgentSettings = AgentSettings()
-    prompt: Path = DEFAULT_PROMPT  # it must explain the guides, see prompts/stack_agent.txt
-    hint_band_mm: float = 5.0  # each side of a lobe boundary, so a band is about twice as wide
+    prompt: Path | None = None  # defaults to the prompt for the guides or for none, see stack_agent.prompt_for
+    pictures: Pictures = Field(default_factory=CtPictures, discriminator="kind")  # what the agent looks at, the CT or its ridge map
+    hint_band_mm: float | None = 5.0  # each side of a lobe boundary, so a band is about twice as wide; None runs without guides
     prices: dict[str, TokenPrices]  # USD per million tokens, keyed by service tier: default, flex
+
+    @model_validator(mode="after")
+    def guides_have_lobes_and_a_matching_prompt(self):
+        if self.with_guides and any(stack.hint_lobes is None for stack in self.stacks):
+            raise ValueError("guides need hint_lobes on every stack")
+        prompt_for(self.prompt, self.with_guides)
+        return self
+
+    @property
+    def with_guides(self) -> bool:
+        return self.hint_band_mm is not None
 
     @field_validator("stack_sizes")
     @classmethod
@@ -107,12 +120,6 @@ class StackExperiment(ExperimentSettings):
         return self.out_dir / "fissure_bands" / stack.run_dir.parent.name / stack.view
 
 
-def step_mm(experiment: StackExperiment, stack: Stack) -> float:
-    "the distance between neighbouring slices of the stack, along the axis the view steps through"
-    spacing = nib.as_closest_canonical(nib.load(stack.run_dir / "scan.nii.gz")).header.get_zooms()
-    return float(spacing[VIEW_AXIS[stack.view]]) * experiment.slice_step
-
-
 def run_conversation(experiment: StackExperiment, conversation: Conversation, client) -> StackLog:
     stack = conversation.stack
     return run_stack(
@@ -121,20 +128,23 @@ def run_conversation(experiment: StackExperiment, conversation: Conversation, cl
         experiment.folder(conversation),
         stack.view_dir / "slices",
         experiment.slice_indices(conversation),
-        step_mm(experiment, stack),
-        experiment.prompt,
+        slice_step_mm(stack.run_dir / "scan.nii.gz", stack.view, experiment.slice_step),
+        prompt_for(experiment.prompt, experiment.with_guides),
         guides_for(experiment, stack, experiment.slice_indices(conversation)),
+        experiment.pictures,
     )
 
 
-def guides_for(experiment: StackExperiment, stack: Stack, slice_indices: list[int]) -> OverviewGuides:
-    bands_dir = experiment.bands_dir(stack)
-    bands = {z: read_gray(bands_dir / slice_file_name(z)) for z in slice_indices}
-    return OverviewGuides(bands, OUTLINE_COLOUR_OF_FISSURE)
+def guides_for(experiment: StackExperiment, stack: Stack, slice_indices: list[int]) -> NoGuides:
+    if not experiment.with_guides:
+        return NoGuides()
+    return overview_guides(experiment.bands_dir(stack), slice_indices)
 
 
 def write_hints(experiment: StackExperiment) -> None:
     "before the conversations start, since threads writing the same hint folder would race"
+    if not experiment.with_guides:
+        return
     for stack in experiment.stacks:
         write_hint_slices(stack.hint_lobes, stack.run_dir / "scan.nii.gz", experiment.bands_dir(stack).parent, [stack.view], experiment.hint_band_mm)
 

@@ -1,0 +1,26 @@
+# The ridge map run without guides with gpt-6.1-terra instead of gpt-6.1-sol: stack_agent_eval40_step3_ridge_no_guides.yaml with another model.
+# Prices are terra list prices from Portkey's price table, half of sol's.
+# The tracer still runs on the CT.
+# The one-slice baseline ran at step 4, so it has only the centre slice of each stack.
+# The stacks were drawn at random (seed 0), stratified: 2 per view of locca_covid_013, 1 per view of lung_002.
+out_dir: work/stack_agent/eval40_step3_ridge_no_guides_terra
+agent:
+  model: "@openai/gpt-6.1-terra"
+prompt: prompts/stack_agent_ridge_no_guides.txt
+pictures: {kind: ridge, display_max: 30}  # white from 30 grey levels, about 70 HU
+hint_band_mm: null  # no guides
+stack_sizes: [5]
+slice_step: 3
+repeats: 2
+stacks:
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 140}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 272}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 184}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 288}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 164}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 380}
+  - {run_dir: work/scans/lung_002/flex_step4, view: axial, centre: 116}
+  - {run_dir: work/scans/lung_002/flex_step4, view: coronal, centre: 212}
+prices:
+  default: {input: 1.00, cached_input: 0.05, cache_write: 1.25, output: 5.00}
+  flex: {input: 0.50, cached_input: 0.025, cache_write: 0.625, output: 2.50}

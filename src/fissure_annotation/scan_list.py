@@ -10,9 +10,15 @@ How:
    - A scan with slices thicker than `max_slice_mm` is skipped, since fissures are lost between such slices.
    - A scan whose slices are more than `max_slice_to_pixel_ratio` times its pixels is resampled along z (`imaging/resample.py`).
    - The scan the pipeline uses is kept in the folder of the scan, as a link to the store when it needs no resampling.
-3. For each scan, the agent is run on every `slice_step`-th slice of each view (`make_fissure_mask`).
-4. Then the masks are cleaned and blended into one sheet (`post_process_fissure_masks`).
-5. Each scan gets its own folder under `out_root`, see `ScanFolder`.
+3. The lobes are segmented with TotalSegmentator into `totalseg_lobes.nii.gz`, unless that file exists.
+   - It comes before the agent, since the stack annotator draws its guides from it.
+4. For each scan, the agent is run on every `slice_step`-th slice of each view (`make_fissure_mask`).
+   - The `annotator` of the config annotates one slice at a time, or stacks of neighbours (annotators.py).
+5. Then the masks are cleaned and blended into one sheet (`post_process_fissure_masks`).
+   - It uses `lobes.nii.gz` when the folder has one, for example manual lobes put there before the run.
+   - Otherwise it uses the TotalSegmentator lobes.
+   - So manual lobes never reach the agent's guides, and an evaluation against them stays fair.
+6. Each scan gets its own folder under `out_root`, see `ScanFolder`.
    - With `run_name` set, a run is a subfolder of the scan, `<out_root>/<uid>/<run_name>/`.
    - So all runs of a scan sit together, for example `work/scans/<uid>/flex_step4/`.
    - A scan with a sheet in its folder is done, and is skipped on the next run.
@@ -35,6 +41,7 @@ import nibabel as nib
 from pydantic import BaseModel, Field
 
 from fissure_annotation.agent import AgentSettings
+from fissure_annotation.annotators import Annotator, OneSliceAnnotator
 from fissure_annotation.fissure_mask import FissureMaskJob, make_fissure_mask
 from fissure_annotation.imaging.resample import (
     resample_z_to_pixel_spacing,
@@ -47,7 +54,7 @@ from fissure_annotation.postprocess import (
     SheetSettings,
     post_process_fissure_masks,
 )
-from fissure_annotation.segmentation import TotalSegmentatorSettings
+from fissure_annotation.segmentation import LUNG_LOBES, TotalSegmentatorSettings, run_totalsegmentator
 from fissure_annotation.settings import ExperimentSettings
 
 ESTIMATED_USD_PER_SLICE = (0.011, 0.015)
@@ -69,6 +76,7 @@ class ScanListJob(ExperimentSettings):
     limit: int | None = None  # only the first scans of the list, to try the run on a few
     dry_run: bool = False  # the script prints the plan and calls nothing
     agent: AgentSettings = AgentSettings()
+    annotator: Annotator = Field(default_factory=OneSliceAnnotator, discriminator="kind")
     sheet: SheetSettings = SheetSettings()
     totalsegmentator: TotalSegmentatorSettings = TotalSegmentatorSettings()
 
@@ -92,7 +100,16 @@ class ScanFolder(BaseModel):
 
     @property
     def lobes_path(self) -> Path:
+        "lobes put in the folder before the run, such as manual ones; older runs also have TotalSegmentator's here"
         return self.folder / "lobes.nii.gz"
+
+    @property
+    def segmented_lobes_path(self) -> Path:
+        return self.folder / "totalseg_lobes.nii.gz"
+
+    @property
+    def post_processing_lobes_path(self) -> Path:
+        return self.lobes_path if self.lobes_path.exists() else self.segmented_lobes_path
 
     @property
     def post_dir(self) -> Path:
@@ -199,6 +216,8 @@ def mask_job_for(job: ScanListJob, scan: Path, folder: ScanFolder) -> FissureMas
         slice_step=job.slice_step,
         workers=job.workers,
         agent=job.agent,
+        annotator=job.annotator,
+        lobes=folder.segmented_lobes_path,
     )
 
 
@@ -207,7 +226,7 @@ def post_job_for(job: ScanListJob, scan: Path, folder: ScanFolder) -> PostProces
         nifti=scan,
         mask_path=folder.mask_path,
         views=job.views,
-        lobes=folder.lobes_path,
+        lobes=folder.post_processing_lobes_path,
         out_dir=folder.post_dir,
         slice_step=job.slice_step,
         sheet=job.sheet,
@@ -215,8 +234,14 @@ def post_job_for(job: ScanListJob, scan: Path, folder: ScanFolder) -> PostProces
     )
 
 
+def segment_lobes(job: ScanListJob, scan: Path, folder: ScanFolder) -> None:
+    if not folder.segmented_lobes_path.exists():
+        run_totalsegmentator(scan, LUNG_LOBES, folder.segmented_lobes_path, job.totalsegmentator)
+
+
 def process_scan(job: ScanListJob, uid: str, folder: ScanFolder, client) -> None:
     scan = prepare_scan(job, uid, folder)
+    segment_lobes(job, scan, folder)
     make_fissure_mask(mask_job_for(job, scan, folder), client)
     post_process_fissure_masks(post_job_for(job, scan, folder))
 

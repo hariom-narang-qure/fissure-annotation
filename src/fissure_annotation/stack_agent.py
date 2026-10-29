@@ -15,15 +15,22 @@ How:
    - It is kept apart from the per-slice logs, so one conversation is not priced once per slice.
 5. With guides, the first message shows the dashed edges of a band around each fissure (`OverviewGuides`).
    - The tracer always follows the ridge of the clean slice, never a drawn guide.
+   - Guides need a lobe segmentation, so they are optional.
+   - Without them the agent gets a prompt that does not mention them (`prompt_for`).
+6. The agent can look at the CT or at its ridge map (`CtPictures`, `RidgePictures`).
+   - The ridge map is what the tracer follows (imaging/tracing.py), so it shows what a trace will stick to.
+   - Every picture the agent sees uses it: the first message, zooms and trace overlays.
+   - The tracer always runs on the CT slice, since the ridge of a ridge map is not the ridge of the CT.
 """
 
 import json
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 from jaxtyping import UInt8
 from PIL import Image
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from fissure_annotation.agent import (
     AXIAL_LUNG_HINT,
@@ -41,11 +48,13 @@ from fissure_annotation.imaging.png import read_gray, save_png
 from fissure_annotation.imaging.slices import slice_file_name
 from fissure_annotation.imaging.guides import Colour, draw_band_outlines
 from fissure_annotation.imaging.ticks import crop_with_ticks
-from fissure_annotation.imaging.tracing import trace_mask
+from fissure_annotation.imaging.tracing import ridge_picture, trace_mask
 from fissure_annotation.tools import STACK_TOOLS
 from fissure_annotation.waypoints import Fissure, RunFolder, SliceWaypoints
 
 DEFAULT_PROMPT = Path(__file__).parents[2] / "prompts" / "stack_agent.txt"
+NO_GUIDES_PROMPT = Path(__file__).parents[2] / "prompts" / "stack_agent_no_guides.txt"
+GUIDES_MARKER = "GUIDES:"  # the prompt section that explains the guides
 STACK_OVERLAY_SCALE = 2  # one overlay per slice comes back, so they are smaller than the one-slice agent's 3
 
 
@@ -74,6 +83,33 @@ def instructions_for(settings: AgentSettings, prompt: Path, count: int, step_mm:
         lung_hint=AXIAL_LUNG_HINT if settings.view == "axial" else "",
         max_traces=settings.max_traces,
     )
+
+
+def prompt_for(prompt: Path | None, with_guides: bool) -> Path:
+    "the default prompt follows the guides; a given prompt must explain guides exactly when there are some"
+    if prompt is None:
+        return DEFAULT_PROMPT if with_guides else NO_GUIDES_PROMPT
+    if (GUIDES_MARKER in prompt.read_text()) != with_guides:
+        raise ValueError(f"{prompt.name} {'does not explain' if with_guides else 'explains'} guides, but the run has {'some' if with_guides else 'none'}")
+    return prompt
+
+
+class CtPictures(BaseModel):
+    kind: Literal["ct"] = "ct"
+
+    def picture(self, image: UInt8[np.ndarray, "h w"]) -> UInt8[np.ndarray, "h w"]:
+        return image
+
+
+class RidgePictures(BaseModel):
+    kind: Literal["ridge"] = "ridge"
+    display_max: float = Field(default=30.0, gt=0)  # lung-window grey levels shown as white, 30 is about 70 HU
+
+    def picture(self, image: UInt8[np.ndarray, "h w"]) -> UInt8[np.ndarray, "h w"]:
+        return ridge_picture(image, self.display_max)
+
+
+Pictures = CtPictures | RidgePictures
 
 
 class NoGuides:
@@ -106,10 +142,13 @@ class StackSession:
         slices_dir: Path,
         slice_indices: list[int],
         guides: NoGuides | None = None,
+        pictures: Pictures | None = None,
     ):
         self.settings, self.folder, self.slice_indices = settings, folder, slice_indices
         self.slice_pngs = {z: slices_dir / slice_file_name(z) for z in slice_indices}
         self.images: dict[int, UInt8[np.ndarray, "h w"]] = {z: read_gray(png) for z, png in self.slice_pngs.items()}
+        pictures = CtPictures() if pictures is None else pictures
+        self.pictures = {z: pictures.picture(image) for z, image in self.images.items()}  # what the agent sees; the tracer uses images
         self.guides = NoGuides() if guides is None else guides
         self.traces = 0
 
@@ -125,7 +164,8 @@ class StackSession:
         return self.images[slice_index]
 
     def zoom(self, slice: int, x0: int, y0: int, x1: int, y1: int, scale: int) -> list[dict]:
-        picture = self.image_of(slice)
+        self.image_of(slice)  # raises for a slice outside the stack
+        picture = self.pictures[slice]
         height, width = picture.shape
         box = (max(0, x0), max(0, y0), min(width, x1), min(height, y1))
         if box[2] - box[0] < MIN_CROP_PX or box[3] - box[1] < MIN_CROP_PX:
@@ -147,10 +187,9 @@ class StackSession:
             self.folder.mask_path(png).unlink(missing_ok=True)
             self.folder.overlay_path(png).unlink(missing_ok=True)
             return
-        picture = self.images[slice_index]
-        mask = trace_mask(picture, [fissure.points for fissure in fissures])
+        mask = trace_mask(self.images[slice_index], [fissure.points for fissure in fissures])
         save_png(mask.astype(np.uint8) * 255, self.folder.mask_path(png))
-        save_png(red_overlay(picture, mask), self.folder.overlay_path(png))
+        save_png(red_overlay(self.pictures[slice_index], mask), self.folder.overlay_path(png))
 
     def overlay_reply(self, slice_index: int) -> list[dict]:
         png = self.slice_pngs[slice_index]
@@ -176,7 +215,7 @@ def first_input(session: StackSession) -> list[dict]:
     height, width = next(iter(session.images.values())).shape
     content = [text(f"{len(session.slice_indices)} {session.settings.view} slices, each {width}x{height} px, in order.")]
     for z in session.slice_indices:
-        content += [text(f"Slice {z}:"), image(Image.fromarray(session.guides.overview(z, session.images[z])))]
+        content += [text(f"Slice {z}:"), image(Image.fromarray(session.guides.overview(z, session.pictures[z])))]
     return [{"role": "user", "content": content}]
 
 
@@ -189,8 +228,9 @@ def run_stack(
     step_mm: float,
     prompt: Path = DEFAULT_PROMPT,
     guides: NoGuides | None = None,
+    pictures: Pictures | None = None,
 ) -> StackLog:
-    session = StackSession(settings, folder, slices_dir, slice_indices, guides)
+    session = StackSession(settings, folder, slices_dir, slice_indices, guides, pictures)
     instructions = instructions_for(settings, prompt, len(slice_indices), step_mm)
     log = StackLog(slice_indices=slice_indices, summary=None, traces=0, steps=0, input_tokens=0, output_tokens=0, calls=[])
 

@@ -1,0 +1,21 @@
+# The pipeline on severe emphysema scans with gpt-6.1-terra, the stack agent looking at the ridge map, no lobe guides, slices 3 apart.
+# The prompt and the ridge cap of 20 are terra experiment 09, the best of the 10 terra prompt experiments on the 40 LOCCA slices.
+# Post-processing uses the TotalSegmentator lobes, which the run segments first.
+csv: configs/emphysema_scans.csv
+scans_dir: /realdata/hariom.narang/qmuse/data/scans
+out_root: work/scans
+run_name: terra_ridge_step3
+slice_step: 3
+views: [axial, coronal, sagittal]
+workers: 8  # stacks in flight, each with 5 slices
+agent:
+  model: "@openai/gpt-6.1-terra"
+annotator:
+  kind: stack
+  size: 5
+  hint_band_mm: null  # no guides
+  prompt: prompts/stack_agent_ridge_terra.txt
+  pictures: {kind: ridge, display_max: 20}
+totalsegmentator:
+  command: [/home/hariom.narang/fissure-work-bak/1.2.392.200036.9116.2.6.1.54365.1690017023.1783390643.994211/fusion/tools/ts_venv/bin/python, -m, totalsegmentator.bin.TotalSegmentator]
+  gpu_index: 0

@@ -1,0 +1,22 @@
+# The step 3 ablation of stack_agent_eval40.yaml: the same 8 centres, with the 5 slices of a stack 3 apart instead of 4.
+# A pipeline at step 3 annotates a third more slices, so this checks what the closer neighbours buy.
+# The one-slice baseline ran at step 4, so it has only the centre slice of each stack.
+# The stacks were drawn at random (seed 0), stratified: 2 per view of locca_covid_013, 1 per view of lung_002.
+# The guides come from the TotalSegmentator lobes, never the manual lobes in the run folder, which score the run.
+out_dir: work/stack_agent/eval40_step3
+hint_band_mm: 5.0
+stack_sizes: [5]
+slice_step: 3
+repeats: 2
+stacks:
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 140, hint_lobes: work/datasets/locca/nifti/locca_covid_013/totalseg_lobes.nii.gz}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 272, hint_lobes: work/datasets/locca/nifti/locca_covid_013/totalseg_lobes.nii.gz}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 184, hint_lobes: work/datasets/locca/nifti/locca_covid_013/totalseg_lobes.nii.gz}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 288, hint_lobes: work/datasets/locca/nifti/locca_covid_013/totalseg_lobes.nii.gz}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 164, hint_lobes: work/datasets/locca/nifti/locca_covid_013/totalseg_lobes.nii.gz}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 380, hint_lobes: work/datasets/locca/nifti/locca_covid_013/totalseg_lobes.nii.gz}
+  - {run_dir: work/scans/lung_002/flex_step4, view: axial, centre: 116, hint_lobes: work/datasets/locca/nifti/lung_002/totalseg_lobes.nii.gz}
+  - {run_dir: work/scans/lung_002/flex_step4, view: coronal, centre: 212, hint_lobes: work/datasets/locca/nifti/lung_002/totalseg_lobes.nii.gz}
+prices:
+  default: {input: 2.00, cached_input: 0.10, cache_write: 2.50, output: 10.00}
+  flex: {input: 1.00, cached_input: 0.05, cache_write: 1.25, output: 5.00}
