@@ -20,15 +20,13 @@ import csv
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import nibabel as nib
 from pydantic import BaseModel, Field, field_validator
 from tqdm import tqdm
 
 from fissure_annotation.agent import AgentSettings
-from fissure_annotation.fissure_hints import OUTLINE_COLOUR_OF_FISSURE, write_hint_slices
-from fissure_annotation.imaging.png import read_gray
-from fissure_annotation.imaging.slices import slice_file_name
-from fissure_annotation.imaging.slices import VIEW_AXIS, View
+from fissure_annotation.annotators import overview_guides, slice_step_mm
+from fissure_annotation.fissure_hints import write_hint_slices
+from fissure_annotation.imaging.slices import View
 from fissure_annotation.pricing import TokenPrices, cost_usd, prices_for
 from fissure_annotation.settings import ExperimentSettings
 from fissure_annotation.slice_scores import SliceScore, score_run
@@ -107,12 +105,6 @@ class StackExperiment(ExperimentSettings):
         return self.out_dir / "fissure_bands" / stack.run_dir.parent.name / stack.view
 
 
-def step_mm(experiment: StackExperiment, stack: Stack) -> float:
-    "the distance between neighbouring slices of the stack, along the axis the view steps through"
-    spacing = nib.as_closest_canonical(nib.load(stack.run_dir / "scan.nii.gz")).header.get_zooms()
-    return float(spacing[VIEW_AXIS[stack.view]]) * experiment.slice_step
-
-
 def run_conversation(experiment: StackExperiment, conversation: Conversation, client) -> StackLog:
     stack = conversation.stack
     return run_stack(
@@ -121,16 +113,14 @@ def run_conversation(experiment: StackExperiment, conversation: Conversation, cl
         experiment.folder(conversation),
         stack.view_dir / "slices",
         experiment.slice_indices(conversation),
-        step_mm(experiment, stack),
+        slice_step_mm(stack.run_dir / "scan.nii.gz", stack.view, experiment.slice_step),
         experiment.prompt,
         guides_for(experiment, stack, experiment.slice_indices(conversation)),
     )
 
 
 def guides_for(experiment: StackExperiment, stack: Stack, slice_indices: list[int]) -> OverviewGuides:
-    bands_dir = experiment.bands_dir(stack)
-    bands = {z: read_gray(bands_dir / slice_file_name(z)) for z in slice_indices}
-    return OverviewGuides(bands, OUTLINE_COLOUR_OF_FISSURE)
+    return overview_guides(experiment.bands_dir(stack), slice_indices)
 
 
 def write_hints(experiment: StackExperiment) -> None:

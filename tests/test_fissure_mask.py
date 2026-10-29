@@ -13,9 +13,9 @@ from test_experiment import ModelPerSlice
 LUNG_HU, LINE_HU = -850, -600
 
 
-def scan_with_a_bright_line(path):
-    "512 x 512 x 3 lung with a bright line along row 300 (columns 100 to 400) of the slice as the model sees it"
-    volume = np.full((512, 512, 3), LUNG_HU, dtype=np.int16)
+def scan_with_a_bright_line(path, slices=3):
+    "512 x 512 lung with a bright line along row 300 (columns 100 to 400) of each slice as the model sees it"
+    volume = np.full((512, 512, slices), LUNG_HU, dtype=np.int16)
     volume[511 - 399 : 511 - 100 + 1, 511 - 300, :] = (
         LINE_HU  # the slice flips x and y, see slices.slice_view
     )
