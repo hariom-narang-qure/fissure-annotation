@@ -29,7 +29,7 @@ from fissure_annotation.experiment import WaypointExperiment, run_slices
 from fissure_annotation.fissure_hints import OUTLINE_COLOUR_OF_FISSURE, write_hint_slices
 from fissure_annotation.imaging.png import read_gray
 from fissure_annotation.imaging.slices import VIEW_AXIS, View, slice_file_name
-from fissure_annotation.stack_agent import NoGuides, OverviewGuides, StackFolder, prompt_for, run_stack
+from fissure_annotation.stack_agent import CtPictures, NoGuides, OverviewGuides, Pictures, StackFolder, prompt_for, run_stack
 
 
 class ViewWork(BaseModel):
@@ -98,6 +98,7 @@ class StackAnnotator(BaseModel):
     size: int = Field(default=5, ge=1)
     hint_band_mm: float | None = 5.0  # each side of a lobe boundary, so a band is about twice as wide; None runs without guides
     prompt: Path | None = None  # defaults to the prompt for the guides or for none, see stack_agent.prompt_for
+    pictures: Pictures = Field(default_factory=CtPictures, discriminator="kind")  # what the agent looks at, the CT or its ridge map
 
     @model_validator(mode="after")
     def prompt_matches_the_guides(self):
@@ -137,6 +138,7 @@ class StackAnnotator(BaseModel):
             slice_step_mm(work.scan, work.view, work.slice_step),
             self.prompt_path,
             self.guides(work, stack),
+            self.pictures,
         )
 
     def guides(self, work: ViewWork, stack: list[int]) -> NoGuides:

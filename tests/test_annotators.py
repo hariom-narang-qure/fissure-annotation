@@ -113,3 +113,25 @@ def test_a_prompt_that_does_not_match_the_guides_is_refused():
         StackAnnotator(hint_band_mm=None, prompt=DEFAULT_PROMPT)
     with pytest.raises(ValueError, match="does not explain"):
         StackAnnotator(prompt=NO_GUIDES_PROMPT)
+
+
+def test_the_stack_annotator_can_show_the_agent_the_ridge_map(tmp_path, scan_and_lobes):
+    import base64
+    import io
+
+    from PIL import Image
+
+    from fissure_annotation.stack_agent import RidgePictures
+
+    scan, _ = scan_and_lobes
+    model = TraceEverySliceModel()
+    requests = []
+    create = model.create
+    model.create = lambda **request: requests.append(request) or create(**request)
+    annotator = StackAnnotator(size=3, hint_band_mm=None, pictures=RidgePictures(display_max=20))
+    job = stack_job(tmp_path, scan, None, annotator=annotator)
+    make_fissure_mask(job, model)
+    first = next(p for p in requests[0]["input"][0]["content"] if p["type"] == "input_image")
+    seen = np.asarray(Image.open(io.BytesIO(base64.b64decode(first["image_url"].split(",")[1]))).convert("L"))
+    assert (seen == 0).mean() > 0.5 and seen.max() > 100  # a ridge map is black with a bright line, the CT slice is lung grey
+    assert np.asarray(nib.load(job.mask_path).dataobj).any()
