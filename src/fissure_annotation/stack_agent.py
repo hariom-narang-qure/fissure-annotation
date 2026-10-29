@@ -13,7 +13,8 @@ How:
    - The files are the ones the one-slice agent writes (waypoints.RunFolder), so the masks are scored and stacked the same way.
 4. One log covers the whole conversation, see `StackFolder.stack_log_path`.
    - It is kept apart from the per-slice logs, so one conversation is not priced once per slice.
-5. With hints, each slice is followed by its band mask, and a zoom returns the same crop of the mask too.
+5. Hints say where each fissure could be, shown in one of two ways (`BandMaskImages`, `BandOutlines`).
+   - The tracer always follows the ridge of the clean slice, never a drawn hint.
 """
 
 import json
@@ -38,7 +39,8 @@ from fissure_annotation.agent import (
 from fissure_annotation.imaging.overlay import red_overlay
 from fissure_annotation.imaging.png import read_gray, save_png
 from fissure_annotation.imaging.slices import slice_file_name
-from fissure_annotation.imaging.ticks import crop_with_ticks
+from fissure_annotation.imaging.guides import Colour, draw_band_outlines
+from fissure_annotation.imaging.ticks import Box, crop_with_ticks
 from fissure_annotation.imaging.tracing import trace_mask
 from fissure_annotation.tools import STACK_TOOLS
 from fissure_annotation.waypoints import Fissure, RunFolder, SliceWaypoints
@@ -74,6 +76,45 @@ def instructions_for(settings: AgentSettings, prompt: Path, count: int, step_mm:
     )
 
 
+class NoHints:
+    "what the session shows of a slice; the hint classes below change one part of it each"
+
+    def shown(self, slice_index: int, picture: np.ndarray) -> np.ndarray:
+        return picture
+
+    def after_slice(self, slice_index: int) -> list[dict]:
+        return []
+
+    def zoom_extras(self, slice_index: int, box: Box, scale: int) -> list[dict]:
+        return []
+
+
+class BandMaskImages(NoHints):
+    "each slice is followed by its band mask, and a zoom returns the same crop of the mask too"
+
+    def __init__(self, masks: dict[int, UInt8[np.ndarray, "h w"]]):
+        self.masks = masks
+
+    def after_slice(self, slice_index: int) -> list[dict]:
+        return [text(f"Band mask of slice {slice_index}:"), image(Image.fromarray(self.masks[slice_index]))]
+
+    def zoom_extras(self, slice_index: int, box: Box, scale: int) -> list[dict]:
+        return [text("The band mask of the same crop:"), image(crop_with_ticks(self.masks[slice_index], box, scale))]
+
+
+class BandOutlines(NoHints):
+    "the dashed outline of each band is drawn on every picture of a slice: the slice, its zooms and its trace overlay"
+
+    def __init__(self, masks: dict[int, UInt8[np.ndarray, "h w"]], colour_of_value: dict[int, Colour]):
+        self.masks, self.colour_of_value = masks, colour_of_value
+
+    def shown(self, slice_index: int, picture: np.ndarray) -> np.ndarray:
+        return draw_band_outlines(picture, self.masks[slice_index], self.colour_of_value)
+
+
+Hints = NoHints | BandMaskImages | BandOutlines
+
+
 class StackSession:
     "the tools of one stack, with the state they share (the slice images and the trace count)"
 
@@ -83,15 +124,12 @@ class StackSession:
         folder: StackFolder,
         slices_dir: Path,
         slice_indices: list[int],
-        hints_dir: Path | None = None,
+        hints: Hints | None = None,
     ):
-        "hints_dir holds a band mask PNG per slice on the pixels of the slice (fissure_hints.py), or None for no hints"
         self.settings, self.folder, self.slice_indices = settings, folder, slice_indices
         self.slice_pngs = {z: slices_dir / slice_file_name(z) for z in slice_indices}
         self.images: dict[int, UInt8[np.ndarray, "h w"]] = {z: read_gray(png) for z, png in self.slice_pngs.items()}
-        self.hints: dict[int, UInt8[np.ndarray, "h w"]] = (
-            {} if hints_dir is None else {z: read_gray(hints_dir / slice_file_name(z)) for z in slice_indices}
-        )
+        self.hints = NoHints() if hints is None else hints
         self.traces = 0
 
     def run_tool(self, name: str, arguments: dict) -> list[dict]:
@@ -111,10 +149,7 @@ class StackSession:
         box = (max(0, x0), max(0, y0), min(width, x1), min(height, y1))
         if box[2] - box[0] < MIN_CROP_PX or box[3] - box[1] < MIN_CROP_PX:
             return [text("crop too small")]
-        crops = [image(crop_with_ticks(picture, box, scale))]
-        if slice in self.hints:
-            crops += [text("The band mask of the same crop:"), image(crop_with_ticks(self.hints[slice], box, scale))]
-        return crops
+        return [image(crop_with_ticks(self.hints.shown(slice, picture), box, scale))] + self.hints.zoom_extras(slice, box, scale)
 
     def fissures_by_slice(self, fissures: list[dict]) -> dict[int, list[Fissure]]:
         "every slice of the stack gets an entry, an empty one when the call has no fissure on it"
@@ -141,7 +176,7 @@ class StackSession:
         overlay_path = self.folder.overlay_path(png)
         if not overlay_path.exists():
             return [text(f"slice {slice_index}: no fissure")]
-        overlay = np.asarray(Image.open(overlay_path).convert("RGB"))
+        overlay = self.hints.shown(slice_index, np.asarray(Image.open(overlay_path).convert("RGB")))
         box = self.settings.overlay_box_for(overlay.shape[:2])
         return [text(f"slice {slice_index}:"), image(crop_with_ticks(overlay, box, STACK_OVERLAY_SCALE))]
 
@@ -160,9 +195,8 @@ def first_input(session: StackSession) -> list[dict]:
     height, width = next(iter(session.images.values())).shape
     content = [text(f"{len(session.slice_indices)} {session.settings.view} slices, each {width}x{height} px, in order.")]
     for z in session.slice_indices:
-        content += [text(f"Slice {z}:"), image(Image.fromarray(session.images[z]))]
-        if z in session.hints:
-            content += [text(f"Band mask of slice {z}:"), image(Image.fromarray(session.hints[z]))]
+        content += [text(f"Slice {z}:"), image(Image.fromarray(session.hints.shown(z, session.images[z])))]
+        content += session.hints.after_slice(z)
     return [{"role": "user", "content": content}]
 
 
@@ -174,9 +208,9 @@ def run_stack(
     slice_indices: list[int],
     step_mm: float,
     prompt: Path = DEFAULT_PROMPT,
-    hints_dir: Path | None = None,
+    hints: Hints | None = None,
 ) -> StackLog:
-    session = StackSession(settings, folder, slices_dir, slice_indices, hints_dir)
+    session = StackSession(settings, folder, slices_dir, slice_indices, hints)
     instructions = instructions_for(settings, prompt, len(slice_indices), step_mm)
     log = StackLog(slice_indices=slice_indices, summary=None, traces=0, steps=0, input_tokens=0, output_tokens=0, calls=[])
 

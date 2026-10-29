@@ -15,9 +15,11 @@ How:
 4. The cost of each conversation is priced from its logged usage (pricing.py).
 5. A stack with `hint_lobes` gives the agent a band mask per slice (fissure_hints.py), written once per scan and view.
    - Hints need a prompt that explains them, so `prompt` names the prompt file.
+   - `hint_style` shows them as a separate mask image or as dashed outlines on the slice.
 """
 
 import csv
+from typing import Literal
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -26,12 +28,14 @@ from pydantic import BaseModel, Field, field_validator
 from tqdm import tqdm
 
 from fissure_annotation.agent import AgentSettings
-from fissure_annotation.fissure_hints import write_hint_slices
+from fissure_annotation.fissure_hints import OUTLINE_COLOUR_OF_GREY, write_hint_slices
+from fissure_annotation.imaging.png import read_gray
+from fissure_annotation.imaging.slices import slice_file_name
 from fissure_annotation.imaging.slices import VIEW_AXIS, View
 from fissure_annotation.pricing import TokenPrices, cost_usd, prices_for
 from fissure_annotation.settings import ExperimentSettings
 from fissure_annotation.slice_scores import SliceScore, score_run
-from fissure_annotation.stack_agent import DEFAULT_PROMPT, StackFolder, StackLog, run_stack
+from fissure_annotation.stack_agent import DEFAULT_PROMPT, BandMaskImages, BandOutlines, Hints, StackFolder, StackLog, run_stack
 from fissure_annotation.waypoints import RunFolder
 
 
@@ -67,6 +71,7 @@ class StackExperiment(ExperimentSettings):
     agent: AgentSettings = AgentSettings()
     prompt: Path = DEFAULT_PROMPT  # the prompt with hints must explain the band mask, see prompts/stack_agent_hints.txt
     hint_band_mm: float = 5.0  # each side of a lobe boundary, so a band is about twice as wide
+    hint_style: Literal["mask_image", "outline"] = "mask_image"  # a separate band mask per slice, or band outlines drawn on it
     prices: dict[str, TokenPrices]  # USD per million tokens, keyed by service tier: default, flex
 
     @field_validator("stack_sizes")
@@ -118,8 +123,18 @@ def run_conversation(experiment: StackExperiment, conversation: Conversation, cl
         experiment.slice_indices(conversation),
         step_mm(experiment, stack),
         experiment.prompt,
-        experiment.hints_dir(stack),
+        hints_for(experiment, stack, experiment.slice_indices(conversation)),
     )
+
+
+def hints_for(experiment: StackExperiment, stack: Stack, slice_indices: list[int]) -> Hints | None:
+    hints_dir = experiment.hints_dir(stack)
+    if hints_dir is None:
+        return None
+    masks = {z: read_gray(hints_dir / slice_file_name(z)) for z in slice_indices}
+    if experiment.hint_style == "outline":
+        return BandOutlines(masks, OUTLINE_COLOUR_OF_GREY)
+    return BandMaskImages(masks)
 
 
 def write_hints(experiment: StackExperiment) -> None:

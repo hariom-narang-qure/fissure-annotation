@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 
 from fissure_annotation.agent import AgentSettings
-from fissure_annotation.imaging.png import save_png
-from fissure_annotation.stack_agent import StackFolder, run_stack
+from fissure_annotation.imaging.png import read_gray, save_png
+from fissure_annotation.stack_agent import BandMaskImages, BandOutlines, StackFolder, run_stack
 from test_agent import FakeModel
 
 STACK = [4, 8, 12]
@@ -86,10 +86,27 @@ def test_with_hints_each_slice_is_followed_by_its_band_mask_and_zooms_crop_it_to
         [("finish", {"summary": "x"})],
     )
     folder = StackFolder(root=tmp_path / "run")
-    run_stack(model, AgentSettings(), folder, slices_dir, STACK, step_mm=3.2, hints_dir=hints_dir)
+    masks = {z: read_gray(hints_dir / f"slice_{z:04d}.png") for z in STACK}
+    run_stack(model, AgentSettings(), folder, slices_dir, STACK, step_mm=3.2, hints=BandMaskImages(masks))
     content = model.requests[0]["input"][0]["content"]
     labels = [part["text"] for part in content if part["type"] == "input_text"]
     assert labels[1:3] == ["Slice 4:", "Band mask of slice 4:"]
     assert sum(part["type"] == "input_image" for part in content) == 6
     zoom_reply = model.requests[1]["input"][0]["output"]
     assert sum(part["type"] == "input_image" for part in zoom_reply) == 2
+
+
+def test_with_outlines_the_slices_are_drawn_on_and_the_trace_still_follows_the_clean_slice(slices_dir, tmp_path):
+    "a band whose edge sits on the bright line must not change where the trace goes, only what the model sees"
+    masks = {}
+    for z in STACK:
+        mask = np.zeros((512, 512), dtype=np.uint8)
+        mask[300 + z - 5 : 300 + z + 6, 100:400] = 170
+        masks[z] = mask
+    model = FakeModel([("trace_points", {"fissures": [line_on(z) for z in STACK]})], [("finish", {"summary": "x"})])
+    folder = StackFolder(root=tmp_path / "run")
+    run_stack(model, AgentSettings(), folder, slices_dir, STACK, step_mm=3.2, hints=BandOutlines(masks, {170: (255, 220, 0)}))
+    content = model.requests[0]["input"][0]["content"]
+    assert sum(part["type"] == "input_image" for part in content) == 3  # no extra mask images
+    traced = read_gray(folder.mask_path(slices_dir / "slice_0008.png")) > 0
+    assert set(np.nonzero(traced)[0]) == {308}

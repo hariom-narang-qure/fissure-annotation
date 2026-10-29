@@ -11,6 +11,7 @@ How:
    - The work is done in the box around the lungs, since distance transforms of the full volume are slow.
 3. Each view is cut into PNGs like the CT slices, on the same pixel grid, one grey level per fissure (`GREY_OF_FISSURE`).
    - The prompt names the grey levels, so the agent knows which fissure a band is for.
+4. The agent sees them either as a separate mask image, or as dashed outlines drawn on the slice (`OUTLINE_COLOUR_OF_GREY`).
 
 Caveat:
 - The old pipeline showed lobe boundaries as hints, and the model once traced along one through lung with no visible line.
@@ -27,6 +28,13 @@ from fissure_annotation.imaging.lobes import LEFT_OBLIQUE, RIGHT_HORIZONTAL, RIG
 from fissure_annotation.imaging.slices import View, write_label_slices
 
 GREY_OF_FISSURE = {LEFT_OBLIQUE: 85, RIGHT_OBLIQUE: 170, RIGHT_HORIZONTAL: 255}
+# Outlines drawn on the slice take a colour per fissure, keyed by the grey level of its band in the mask PNG.
+# None is red, which marks the agent's own trace.
+OUTLINE_COLOUR_OF_GREY = {
+    GREY_OF_FISSURE[LEFT_OBLIQUE]: (0, 220, 255),  # cyan
+    GREY_OF_FISSURE[RIGHT_OBLIQUE]: (255, 220, 0),  # yellow
+    GREY_OF_FISSURE[RIGHT_HORIZONTAL]: (0, 255, 0),  # green
+}
 DONE_MARKER = "done"
 
 
