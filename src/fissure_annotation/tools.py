@@ -62,3 +62,43 @@ FINISH = {
 }
 
 TOOLS = [ZOOM, TRACE_POINTS, FINISH]
+
+# The stack agent sees several slices at once, so every tool names the slice it acts on.
+POINT = {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}
+
+ZOOM_ON_SLICE = {
+    **ZOOM,
+    "description": "Enlarged crop of one slice of the stack with pixel-coordinate ticks (original pixel coordinates).",
+    "parameters": {
+        **ZOOM["parameters"],
+        "required": ["slice", *ZOOM["parameters"]["required"]],
+        "properties": {"slice": {"type": "integer"}, **ZOOM["parameters"]["properties"]},
+    },
+}
+
+TRACE_STACK = {
+    "type": "function",
+    "name": "trace_points",
+    "description": "Save the waypoints of every slice, trace them along the ridge, return the overlay of each slice. Always pass every fissure of every slice you want to keep.",
+    "parameters": {
+        "type": "object",
+        "required": ["fissures"],
+        "properties": {
+            "fissures": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["slice", "name", "points"],
+                    "properties": {
+                        "slice": {"type": "integer"},
+                        "name": {"type": "string"},
+                        "points": {"type": "array", "minItems": 2, "items": POINT},
+                    },
+                },
+            },
+            "notes": {"type": "string"},
+        },
+    },
+}
+
+STACK_TOOLS = [ZOOM_ON_SLICE, TRACE_STACK, FINISH]
