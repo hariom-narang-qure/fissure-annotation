@@ -15,7 +15,7 @@ How:
 4. The cost of each conversation is priced from its logged usage (pricing.py).
 5. A stack with `hint_lobes` gives the agent a band mask per slice (fissure_hints.py), written once per scan and view.
    - Hints need a prompt that explains them, so `prompt` names the prompt file.
-   - `hint_style` shows them as a separate mask image or as dashed outlines on the slice.
+   - `hint_style` shows them as a separate mask image or as dashed outlines on the slice, see hints_for.
 """
 
 import csv
@@ -35,7 +35,17 @@ from fissure_annotation.imaging.slices import VIEW_AXIS, View
 from fissure_annotation.pricing import TokenPrices, cost_usd, prices_for
 from fissure_annotation.settings import ExperimentSettings
 from fissure_annotation.slice_scores import SliceScore, score_run
-from fissure_annotation.stack_agent import DEFAULT_PROMPT, BandMaskImages, BandOutlines, Hints, StackFolder, StackLog, run_stack
+from fissure_annotation.imaging.guides import draw_merged_band_outlines
+from fissure_annotation.stack_agent import (
+    DEFAULT_PROMPT,
+    BandMaskImages,
+    BandOutlines,
+    Hints,
+    OverviewBandOutlines,
+    StackFolder,
+    StackLog,
+    run_stack,
+)
 from fissure_annotation.waypoints import RunFolder
 
 
@@ -71,7 +81,7 @@ class StackExperiment(ExperimentSettings):
     agent: AgentSettings = AgentSettings()
     prompt: Path = DEFAULT_PROMPT  # the prompt with hints must explain the band mask, see prompts/stack_agent_hints.txt
     hint_band_mm: float = 5.0  # each side of a lobe boundary, so a band is about twice as wide
-    hint_style: Literal["mask_image", "outline"] = "mask_image"  # a separate band mask per slice, or band outlines drawn on it
+    hint_style: Literal["mask_image", "outline", "outline_overview", "outline_merged"] = "mask_image"  # see hints_for
     prices: dict[str, TokenPrices]  # USD per million tokens, keyed by service tier: default, flex
 
     @field_validator("stack_sizes")
@@ -132,9 +142,12 @@ def hints_for(experiment: StackExperiment, stack: Stack, slice_indices: list[int
     if hints_dir is None:
         return None
     masks = {z: read_gray(hints_dir / slice_file_name(z)) for z in slice_indices}
-    if experiment.hint_style == "outline":
-        return BandOutlines(masks, OUTLINE_COLOUR_OF_GREY)
-    return BandMaskImages(masks)
+    return {
+        "mask_image": lambda: BandMaskImages(masks),  # a separate band mask after each slice
+        "outline": lambda: BandOutlines(masks, OUTLINE_COLOUR_OF_GREY),  # dashed outlines on every picture
+        "outline_overview": lambda: OverviewBandOutlines(masks, OUTLINE_COLOUR_OF_GREY),  # only on the first message
+        "outline_merged": lambda: BandOutlines(masks, OUTLINE_COLOUR_OF_GREY, draw_merged_band_outlines),  # touching bands merge
+    }[experiment.hint_style]()
 
 
 def write_hints(experiment: StackExperiment) -> None:

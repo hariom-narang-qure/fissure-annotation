@@ -21,3 +21,16 @@ def test_outlines_are_dashed_and_coloured_and_leave_the_inside_alone():
     top = (rgb[8, 2:18] == CYAN).all(axis=-1)
     assert 0 < top.sum() < 16  # dashed, not solid
     assert (rgb[10, 5:15] == 100).all()
+
+
+def test_merged_outlines_leave_out_the_edge_where_two_bands_touch():
+    from fissure_annotation.imaging.guides import draw_merged_band_outlines
+
+    picture = np.full((30, 30), 100, dtype=np.uint8)
+    bands = np.zeros((30, 30), dtype=np.uint8)
+    bands[5:15, 5:25] = 170  # the oblique band
+    bands[15:25, 5:25] = 255  # the horizontal band, touching it at row 15
+    yellow, green = (255, 220, 0), (0, 255, 0)
+    rgb = draw_merged_band_outlines(picture, bands, {170: yellow, 255: green})
+    assert (rgb[14:16, 8:22] == 100).all()  # no edge drawn between the two bands
+    assert (rgb[5, 5:25] == yellow).all(axis=-1).any() and (rgb[24, 5:25] == green).all(axis=-1).any()

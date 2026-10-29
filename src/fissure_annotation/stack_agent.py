@@ -13,11 +13,13 @@ How:
    - The files are the ones the one-slice agent writes (waypoints.RunFolder), so the masks are scored and stacked the same way.
 4. One log covers the whole conversation, see `StackFolder.stack_log_path`.
    - It is kept apart from the per-slice logs, so one conversation is not priced once per slice.
-5. Hints say where each fissure could be, shown in one of two ways (`BandMaskImages`, `BandOutlines`).
+5. Hints say where each fissure could be, shown as a separate mask (`BandMaskImages`) or as outlines drawn on the slice.
+   - Outlines go on every picture (`BandOutlines`) or only on the first message (`OverviewBandOutlines`).
    - The tracer always follows the ridge of the clean slice, never a drawn hint.
 """
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -79,7 +81,16 @@ def instructions_for(settings: AgentSettings, prompt: Path, count: int, step_mm:
 class NoHints:
     "what the session shows of a slice; the hint classes below change one part of it each"
 
-    def shown(self, slice_index: int, picture: np.ndarray) -> np.ndarray:
+    def overview(self, slice_index: int, picture: np.ndarray) -> np.ndarray:
+        "the slice in the first message"
+        return picture
+
+    def zoomed(self, slice_index: int, picture: np.ndarray) -> np.ndarray:
+        "the slice a zoom is cut from"
+        return picture
+
+    def overlay(self, slice_index: int, picture: np.ndarray) -> np.ndarray:
+        "the trace overlay returned by trace_points"
         return picture
 
     def after_slice(self, slice_index: int) -> list[dict]:
@@ -102,17 +113,44 @@ class BandMaskImages(NoHints):
         return [text("The band mask of the same crop:"), image(crop_with_ticks(self.masks[slice_index], box, scale))]
 
 
+DrawOutlines = Callable[[np.ndarray, np.ndarray, dict[int, Colour]], np.ndarray]
+
+
 class BandOutlines(NoHints):
-    "the dashed outline of each band is drawn on every picture of a slice: the slice, its zooms and its trace overlay"
+    "dashed band outlines on every picture of a slice: the slice, its zooms and its trace overlay"
 
-    def __init__(self, masks: dict[int, UInt8[np.ndarray, "h w"]], colour_of_value: dict[int, Colour]):
-        self.masks, self.colour_of_value = masks, colour_of_value
+    def __init__(
+        self,
+        masks: dict[int, UInt8[np.ndarray, "h w"]],
+        colour_of_value: dict[int, Colour],
+        draw: DrawOutlines = draw_band_outlines,
+    ):
+        self.masks, self.colour_of_value, self.draw = masks, colour_of_value, draw
 
-    def shown(self, slice_index: int, picture: np.ndarray) -> np.ndarray:
-        return draw_band_outlines(picture, self.masks[slice_index], self.colour_of_value)
+    def drawn(self, slice_index: int, picture: np.ndarray) -> np.ndarray:
+        return self.draw(picture, self.masks[slice_index], self.colour_of_value)
+
+    def overview(self, slice_index: int, picture: np.ndarray) -> np.ndarray:
+        return self.drawn(slice_index, picture)
+
+    def zoomed(self, slice_index: int, picture: np.ndarray) -> np.ndarray:
+        return self.drawn(slice_index, picture)
+
+    def overlay(self, slice_index: int, picture: np.ndarray) -> np.ndarray:
+        return self.drawn(slice_index, picture)
 
 
-Hints = NoHints | BandMaskImages | BandOutlines
+class OverviewBandOutlines(BandOutlines):
+    "outlines only in the first message, so the agent judges a line on clean zooms and overlays"
+
+    def zoomed(self, slice_index: int, picture: np.ndarray) -> np.ndarray:
+        return picture
+
+    def overlay(self, slice_index: int, picture: np.ndarray) -> np.ndarray:
+        return picture
+
+
+Hints = NoHints | BandMaskImages | BandOutlines | OverviewBandOutlines
 
 
 class StackSession:
@@ -149,7 +187,7 @@ class StackSession:
         box = (max(0, x0), max(0, y0), min(width, x1), min(height, y1))
         if box[2] - box[0] < MIN_CROP_PX or box[3] - box[1] < MIN_CROP_PX:
             return [text("crop too small")]
-        return [image(crop_with_ticks(self.hints.shown(slice, picture), box, scale))] + self.hints.zoom_extras(slice, box, scale)
+        return [image(crop_with_ticks(self.hints.zoomed(slice, picture), box, scale))] + self.hints.zoom_extras(slice, box, scale)
 
     def fissures_by_slice(self, fissures: list[dict]) -> dict[int, list[Fissure]]:
         "every slice of the stack gets an entry, an empty one when the call has no fissure on it"
@@ -176,7 +214,7 @@ class StackSession:
         overlay_path = self.folder.overlay_path(png)
         if not overlay_path.exists():
             return [text(f"slice {slice_index}: no fissure")]
-        overlay = self.hints.shown(slice_index, np.asarray(Image.open(overlay_path).convert("RGB")))
+        overlay = self.hints.overlay(slice_index, np.asarray(Image.open(overlay_path).convert("RGB")))
         box = self.settings.overlay_box_for(overlay.shape[:2])
         return [text(f"slice {slice_index}:"), image(crop_with_ticks(overlay, box, STACK_OVERLAY_SCALE))]
 
@@ -195,7 +233,7 @@ def first_input(session: StackSession) -> list[dict]:
     height, width = next(iter(session.images.values())).shape
     content = [text(f"{len(session.slice_indices)} {session.settings.view} slices, each {width}x{height} px, in order.")]
     for z in session.slice_indices:
-        content += [text(f"Slice {z}:"), image(Image.fromarray(session.hints.shown(z, session.images[z])))]
+        content += [text(f"Slice {z}:"), image(Image.fromarray(session.hints.overview(z, session.images[z])))]
         content += session.hints.after_slice(z)
     return [{"role": "user", "content": content}]
 

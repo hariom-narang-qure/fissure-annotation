@@ -40,3 +40,20 @@ def draw_band_outlines(
     for value, colour in colour_of_value.items():
         rgb[dashed(outline_of(bands == value))] = colour
     return rgb
+
+
+def draw_merged_band_outlines(
+    picture: UInt8[np.ndarray, "h w *channels"],
+    bands: UInt8[np.ndarray, "h w"],
+    colour_of_value: dict[int, Colour],
+) -> UInt8[np.ndarray, "h w 3"]:
+    """the outline of all bands together, each part coloured by the band it lies on
+
+    Where two bands touch, near the junction of the right oblique and horizontal fissures, their shared edge is
+    inside the merged region and is not drawn, so the region reads as one area with a two-coloured edge.
+    """
+    rgb = np.stack([picture] * 3, axis=-1) if picture.ndim == 2 else picture.copy()
+    edge = dashed(outline_of(np.isin(bands, list(colour_of_value))))
+    for value, colour in colour_of_value.items():
+        rgb[edge & (bands == value)] = colour
+    return rgb

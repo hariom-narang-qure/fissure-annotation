@@ -1,0 +1,27 @@
+# The outline run (stack_eval40_outlines.yaml) with wider guides, 10 mm each side, so the lines sit farther from the fissure.
+# Touching bands merge where the right horizontal and oblique fissures meet, and the prompt explains it.
+# The separate band mask (stack_eval40_hints.yaml) did not help: the agent could not relate it to the slice.
+# The prompt says fissures are often invisible, and to mark only a line that is seen, never a band.
+# The hint lobes are TotalSegmentator's, not the manual lobes in the run folder, which score the run.
+# Step 2 of the stack agent test (https://claude.ai/artifact/3wbEVy3bgTLqv37X9rtrkX): 40 slices, not hand-picked.
+# 8 stacks of 5, drawn at random (seed 0), stratified: 2 per view of locca_covid_013, 1 per view of lung_002 with a baseline.
+# Size 5 won the sweep (configs/stack_sweep.yaml) on the stacks other than coronal 344.
+out_dir: work/stack_agent/eval40_outlines_wide
+prompt: prompts/stack_agent_outlines_wide.txt
+hint_style: outline_merged
+hint_band_mm: 10.0
+stack_sizes: [5]
+slice_step: 4
+repeats: 2
+stacks:
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 140, hint_lobes: work/datasets/locca/nifti/locca_covid_013/totalseg_lobes.nii.gz}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 272, hint_lobes: work/datasets/locca/nifti/locca_covid_013/totalseg_lobes.nii.gz}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 184, hint_lobes: work/datasets/locca/nifti/locca_covid_013/totalseg_lobes.nii.gz}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 288, hint_lobes: work/datasets/locca/nifti/locca_covid_013/totalseg_lobes.nii.gz}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 164, hint_lobes: work/datasets/locca/nifti/locca_covid_013/totalseg_lobes.nii.gz}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 380, hint_lobes: work/datasets/locca/nifti/locca_covid_013/totalseg_lobes.nii.gz}
+  - {run_dir: work/scans/lung_002/flex_step4, view: axial, centre: 116, hint_lobes: work/datasets/locca/nifti/lung_002/totalseg_lobes.nii.gz}
+  - {run_dir: work/scans/lung_002/flex_step4, view: coronal, centre: 212, hint_lobes: work/datasets/locca/nifti/lung_002/totalseg_lobes.nii.gz}
+prices:
+  default: {input: 2.00, cached_input: 0.10, cache_write: 2.50, output: 10.00}
+  flex: {input: 1.00, cached_input: 0.05, cache_write: 1.25, output: 5.00}

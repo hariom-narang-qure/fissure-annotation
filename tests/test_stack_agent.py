@@ -110,3 +110,32 @@ def test_with_outlines_the_slices_are_drawn_on_and_the_trace_still_follows_the_c
     assert sum(part["type"] == "input_image" for part in content) == 3  # no extra mask images
     traced = read_gray(folder.mask_path(slices_dir / "slice_0008.png")) > 0
     assert set(np.nonzero(traced)[0]) == {308}
+
+
+def test_overview_outlines_are_drawn_only_in_the_first_message(slices_dir, tmp_path):
+    import base64
+    import io
+
+    from PIL import Image
+
+    from fissure_annotation.stack_agent import OverviewBandOutlines
+
+    def pixels(part):
+        return np.asarray(Image.open(io.BytesIO(base64.b64decode(part["image_url"].split(",")[1]))).convert("RGB"))
+
+    def has_yellow(picture):
+        return ((picture == (255, 220, 0)).all(axis=-1)).any()
+
+    masks = {z: np.zeros((512, 512), dtype=np.uint8) for z in STACK}
+    for z in STACK:
+        masks[z][250:290, 100:400] = 170
+    model = FakeModel(
+        [("zoom", {"slice": 8, "x0": 90, "y0": 240, "x1": 410, "y1": 300, "scale": 1})],
+        [("finish", {"summary": "x"})],
+    )
+    hints = OverviewBandOutlines(masks, {170: (255, 220, 0)})
+    run_stack(model, AgentSettings(), StackFolder(root=tmp_path / "run"), slices_dir, STACK, step_mm=3.2, hints=hints)
+    first_images = [p for p in model.requests[0]["input"][0]["content"] if p["type"] == "input_image"]
+    zoom_image = model.requests[1]["input"][0]["output"][0]
+    assert has_yellow(pixels(first_images[0]))
+    assert not has_yellow(pixels(zoom_image))
