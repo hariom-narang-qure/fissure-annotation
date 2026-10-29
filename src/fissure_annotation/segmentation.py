@@ -17,6 +17,13 @@ How the TotalSegmentator implementation works:
   - They are not dependencies of this repo, and TotalSegmentator is usually installed in an environment of its own.
   - `TotalSegmentatorSettings.command` says how to start it.
 - The ids in the file are checked, so a different TotalSegmentator version that numbers the structures differently fails loudly.
+
+Lung vessels (`run_lung_vessels`):
+- They come from the `lung_vessels` task, not from `total`, so they have a call of their own.
+- From TotalSegmentator 2.x on, that task is the airways, arteries and veins model (task 117).
+  - The older vessels and airways model is `lung_vessels_LEGACY` (task 258).
+  - Labels of the 117 file: `LUNG_VESSELS_TASK_LABEL_IDS`. The vessels are the arteries and the veins (`VESSEL_LABEL_IDS`).
+- The task crops to the lungs and resamples, then writes back on the grid of the scan.
 """
 
 import os
@@ -58,6 +65,8 @@ LABEL_IDS: dict[Structure, int] = {
     "lung_middle_lobe_right": RIGHT_MIDDLE,
     "lung_lower_lobe_right": RIGHT_LOWER,
 }
+LUNG_VESSELS_TASK_LABEL_IDS = {"lung_airways": 1, "lung_airways_wall": 2, "lung_arteries": 3, "lung_veins": 4}
+VESSEL_LABEL_IDS = (LUNG_VESSELS_TASK_LABEL_IDS["lung_arteries"], LUNG_VESSELS_TASK_LABEL_IDS["lung_veins"])
 ERROR_TAIL_CHARACTERS = 2000
 
 
@@ -105,11 +114,18 @@ def environment_for(settings: TotalSegmentatorSettings) -> dict[str, str]:
     return {**os.environ, "CUDA_VISIBLE_DEVICES": str(settings.gpu_index)}
 
 
+def lung_vessels_arguments(scan: Path, out_path: Path, settings: TotalSegmentatorSettings) -> list[str]:
+    return [*settings.command, "-i", str(scan), "-o", str(out_path), "--ml", "--task", "lung_vessels", "-d", settings.device]
+
+
 def require_only_requested_labels(
     out_path: Path, structures: Sequence[Structure]
 ) -> None:
+    require_only_label_ids(out_path, {LABEL_IDS[structure] for structure in structures})
+
+
+def require_only_label_ids(out_path: Path, expected: set[int]) -> None:
     found = set(np.unique(np.asarray(nib.load(out_path).dataobj)).tolist()) - {0}
-    expected = {LABEL_IDS[structure] for structure in structures}
     if not found <= expected:
         raise ValueError(
             f"{out_path.name} has label ids {sorted(found - expected)} that were not asked for, "
@@ -123,9 +139,22 @@ def run_totalsegmentator(
     out_path: Path,
     settings: TotalSegmentatorSettings = TotalSegmentatorSettings(),
 ) -> Path:
+    run_command(totalsegmentator_arguments(scan, structures, out_path, settings), out_path, settings)
+    require_only_requested_labels(out_path, structures)
+    return out_path
+
+
+def run_lung_vessels(scan: Path, out_path: Path, settings: TotalSegmentatorSettings = TotalSegmentatorSettings()) -> Path:
+    "the multilabel file of the lung_vessels task; the vessel mask is its VESSEL_LABEL_IDS"
+    run_command(lung_vessels_arguments(scan, out_path, settings), out_path, settings)
+    require_only_label_ids(out_path, set(LUNG_VESSELS_TASK_LABEL_IDS.values()))
+    return out_path
+
+
+def run_command(arguments: list[str], out_path: Path, settings: TotalSegmentatorSettings) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
-        totalsegmentator_arguments(scan, structures, out_path, settings),
+        arguments,
         env=environment_for(settings),
         capture_output=True,
         text=True,
@@ -137,5 +166,3 @@ def run_totalsegmentator(
         )
     if not out_path.exists():
         raise FileNotFoundError(f"TotalSegmentator wrote no file at {out_path}")
-    require_only_requested_labels(out_path, structures)
-    return out_path

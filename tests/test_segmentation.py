@@ -10,6 +10,7 @@ from fissure_annotation.segmentation import (
     LABEL_IDS,
     LUNG_LOBES,
     TotalSegmentatorSettings,
+    run_lung_vessels,
     run_totalsegmentator,
     totalsegmentator_arguments,
 )
@@ -142,3 +143,17 @@ def test_a_command_that_writes_nothing_raises(tmp_path, fake_settings, monkeypat
             tmp_path / "lobes.nii.gz",
             fake_settings,
         )
+
+
+def test_lung_vessels_run_their_own_task_on_the_whole_lung(tmp_path, fake_settings, monkeypatch):
+    monkeypatch.setenv("FAKE_IDS", json.dumps([1, 2, 3, 4]))
+    out_path = run_lung_vessels(tmp_path / "scan.nii.gz", tmp_path / "vessels.nii.gz", fake_settings)
+    arguments = last_call(out_path)["arguments"]
+    assert arguments[arguments.index("--task") + 1] == "lung_vessels"
+    assert "--ml" in arguments and "--roi_subset" not in arguments
+
+
+def test_lung_vessels_refuse_labels_the_task_does_not_have(tmp_path, fake_settings, monkeypatch):
+    monkeypatch.setenv("FAKE_IDS", json.dumps([3, 5]))
+    with pytest.raises(ValueError, match="5"):
+        run_lung_vessels(tmp_path / "scan.nii.gz", tmp_path / "vessels.nii.gz", fake_settings)

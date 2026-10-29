@@ -1,0 +1,8 @@
+# The vessels of the two scans of the stack agent's 40-slice eval, for configs/stack_agent_eval40_step3_ridge_vessel_dots.yaml.
+# The lung_vessels task of TotalSegmentator 2.x: airways, airway wall, arteries and veins (task 117).
+scans:
+  - {scan: work/scans/locca_covid_013/flex_step4/scan.nii.gz, vessels: work/vessels/locca_covid_013/lung_vessels.nii.gz}
+  - {scan: work/scans/lung_002/flex_step4/scan.nii.gz, vessels: work/vessels/lung_002/lung_vessels.nii.gz}
+totalsegmentator:
+  command: [/home/hariom.narang/fissure-work-bak/1.2.392.200036.9116.2.6.1.54365.1690017023.1783390643.994211/fusion/tools/ts_venv/bin/python, -m, totalsegmentator.bin.TotalSegmentator]
+  gpu_index: 0
