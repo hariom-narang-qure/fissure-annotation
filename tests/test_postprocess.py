@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 
 from fissure_annotation.imaging.lobes import LEFT_LOWER, LEFT_UPPER
+from fissure_annotation.island_rules import DropSmallIslands, IslandReport
 from fissure_annotation.postprocess import (
     PostProcessJob,
     SheetSettings,
@@ -213,3 +214,24 @@ def test_a_line_inside_the_lungs_is_kept_however_far_it_is_from_the_lobe_boundar
 
     removed = load(job.removed_lines_path)
     assert removed[FAR_X, 20, 5:35].all() and not removed[INSIDE_FAR_X].any()
+
+
+def test_the_island_rules_trim_the_sheet_and_write_a_report(tmp_path):
+    save(lobes_meeting_at_the_boundary(), tmp_path / "lobes.nii.gz")
+    save(
+        ragged_plane_at_the_boundary(range(5, 35)).astype(np.uint8),
+        tmp_path / "fissures_axial.nii.gz",
+    )
+    everything = job_for(tmp_path, ["axial"]).model_copy(update={"island_rules": []})
+    post_process_fissure_masks(everything, FakeSegmenter())
+    whole_sheet = load(everything.sheet_path)
+
+    drop_all_but_largest = everything.model_copy(
+        update={"island_rules": [DropSmallIslands(min_share_of_largest=1.0)]}
+    )
+    post_process_fissure_masks(drop_all_but_largest, FakeSegmenter())
+
+    kept, removed = load(drop_all_but_largest.sheet_path), load(drop_all_but_largest.removed_islands_path)
+    assert ((kept | removed) == whole_sheet).all() and not (kept & removed).any()
+    report = IslandReport.model_validate_json(drop_all_but_largest.island_report_path.read_text())
+    assert report.island_voxels_after == [int(kept.sum())]

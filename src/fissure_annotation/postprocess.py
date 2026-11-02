@@ -17,6 +17,8 @@ How:
 4. The union is blurred along the sheet and thinned to one voxel (`imaging/sheet.py`).
 5. Pieces of the sheet under `min_piece_voxels` are dropped and saved as `removed_pieces.nii.gz`.
    - They are stubs and specks left over from lines that only one view traced, and a fissure is a large surface.
+6. The island rules trim what is left, or flag the scan for review (`island_rules.py`).
+   - Removed islands are saved as `removed_islands.nii.gz`, and what the rules did as `island_report.json`.
 
 Annotating every `slice_step`-th slice cuts the cost of the model by about that factor.
 - Fewer slices give less density on a sheet and longer holes between the lines.
@@ -58,6 +60,11 @@ from fissure_annotation.imaging.sheet import (
     oriented_sheet,
 )
 from fissure_annotation.imaging.slices import View
+from fissure_annotation.island_rules import (
+    IslandRule,
+    apply_island_rules,
+    default_island_rules,
+)
 from fissure_annotation.segmentation import (
     LUNG_LOBES,
     Segmenter,
@@ -103,6 +110,7 @@ class PostProcessJob(ExperimentSettings):
         default=150, ge=0
     )  # pieces of the final sheet under this size are dropped, 0 keeps all of them
     sheet: SheetSettings = SheetSettings()
+    island_rules: list[IslandRule] = Field(default_factory=default_island_rules)  # run in this order, see island_rules.py
     totalsegmentator: TotalSegmentatorSettings = TotalSegmentatorSettings()
 
     @property
@@ -116,6 +124,14 @@ class PostProcessJob(ExperimentSettings):
     @property
     def removed_pieces_path(self) -> Path:
         return self.out_dir / "removed_pieces.nii.gz"
+
+    @property
+    def removed_islands_path(self) -> Path:
+        return self.out_dir / "removed_islands.nii.gz"
+
+    @property
+    def island_report_path(self) -> Path:
+        return self.out_dir / "island_report.json"
 
 
 def sheet_parameters(settings: SheetSettings, slice_step: int) -> dict[str, float]:
@@ -185,7 +201,10 @@ def post_process_fissure_masks(
         **sheet_parameters(job.sheet, job.slice_step),
     )
     sheet, small_pieces = keep_large_pieces(sheet, job.min_piece_voxels)
+    trimmed = apply_island_rules(job.island_rules, sheet, image.affine)
     write_mask_like(np.logical_or.reduce(removed_masks), image, job.removed_lines_path)
     write_mask_like(small_pieces, image, job.removed_pieces_path)
-    write_mask_like(sheet, image, job.sheet_path)
+    write_mask_like(trimmed.removed, image, job.removed_islands_path)
+    job.island_report_path.write_text(trimmed.report.model_dump_json(indent=2))
+    write_mask_like(trimmed.kept, image, job.sheet_path)
     return job.sheet_path
