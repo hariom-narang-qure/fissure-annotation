@@ -58,11 +58,27 @@ class DropSmallIslands(Rule):
         return RuleOutcome(islands.without(np.flatnonzero(too_small)))
 
 
-IslandRule = Annotated[DropSmallIslands, Field(discriminator="kind")]
+class FlagExtraIslands(Rule):
+    "more islands than the two main sheets are left, so a person decides which are fissure"
+
+    kind: Literal["flag_extra_islands"] = "flag_extra_islands"
+    max_islands: int = Field(default=2, ge=1)
+
+    def apply(self, islands: Islands) -> RuleOutcome:
+        if islands.count <= self.max_islands:
+            return RuleOutcome(islands)
+        flag = ReviewFlag(
+            rule=self.kind,
+            reason=f"{islands.count} islands are left, more than {self.max_islands}",
+        )
+        return RuleOutcome(islands, [flag])
+
+
+IslandRule = Annotated[DropSmallIslands | FlagExtraIslands, Field(discriminator="kind")]
 
 
 def default_island_rules() -> list[IslandRule]:
-    return [DropSmallIslands()]
+    return [DropSmallIslands(), FlagExtraIslands()]
 
 
 class IslandReport(BaseModel):
