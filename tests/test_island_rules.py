@@ -3,6 +3,7 @@ from pydantic import BaseModel
 
 from fissure_annotation.island_rules import (
     DropSmallIslands,
+    FlagCloseMainIslands,
     FlagExtraIslands,
     IslandRule,
     apply_island_rules,
@@ -80,4 +81,27 @@ def test_a_config_can_list_the_rules_by_kind():
         {"rules": [{"kind": "drop_small_islands", "min_share_of_largest": 0.1}, {"kind": "flag_extra_islands"}]}
     ).rules
     assert rules == [DropSmallIslands(min_share_of_largest=0.1), FlagExtraIslands()]
-    assert default_island_rules() == [DropSmallIslands(), FlagExtraIslands()]
+    assert default_island_rules() == [DropSmallIslands(), FlagExtraIslands(), FlagCloseMainIslands()]
+
+
+def two_islands_mm_apart(distance_mm):
+    "two single-voxel islands along x on a 1 mm grid"
+    mask = np.zeros((SIZE, SIZE, SIZE), dtype=bool)
+    mask[0, 0, 0] = mask[0, 0, 2] = True
+    return Islands(mask, np.diag([1.0, 1.0, distance_mm / 2, 1.0]))
+
+
+def test_main_islands_closer_than_the_distance_are_flagged():
+    outcome = FlagCloseMainIslands(min_centroid_distance_mm=80).apply(two_islands_mm_apart(60))
+    assert [flag.rule for flag in outcome.flags] == ["flag_close_main_islands"]
+    assert "60 mm" in outcome.flags[0].reason
+
+
+def test_main_islands_far_apart_are_not_flagged():
+    assert FlagCloseMainIslands(min_centroid_distance_mm=80).apply(two_islands_mm_apart(150)).flags == []
+
+
+def test_a_single_island_is_flagged():
+    mask = np.zeros((SIZE, SIZE, SIZE), dtype=bool)
+    mask[0, 0, 0] = True
+    assert FlagCloseMainIslands().apply(Islands(mask, np.eye(4))).flags != []

@@ -29,6 +29,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from fissure_annotation.imaging.islands import Islands
 from fissure_annotation.removals import RemovedVoxels
 
+# Half the median distance between the centroids of the two largest islands, on 11 scans without severe disease.
+# - The median was 164 mm. In 10 scans the two largest islands were on opposite sides, at 140 to 184 mm.
+# - In the eleventh (840568) both were on one side, 47 mm apart.
+# - The median itself would flag half of the good scans, so the cut sits halfway to it.
+MIN_CENTROID_DISTANCE_MM = 82.0
+
 
 class ReviewFlag(BaseModel):
     rule: str
@@ -74,11 +80,39 @@ class FlagExtraIslands(Rule):
         return RuleOutcome(islands, [flag])
 
 
-IslandRule = Annotated[DropSmallIslands | FlagExtraIslands, Field(discriminator="kind")]
+class FlagCloseMainIslands(Rule):
+    """the two largest islands should be the two lungs, so their centroids are far apart
+
+    Two close main islands are likely one lung's fissure in two pieces, with the other lung's fissure missing.
+    A sheet with fewer than two islands is flagged too, since a lung has no fissure.
+    """
+
+    kind: Literal["flag_close_main_islands"] = "flag_close_main_islands"
+    min_centroid_distance_mm: float = Field(default=MIN_CENTROID_DISTANCE_MM, gt=0)
+
+    def apply(self, islands: Islands) -> RuleOutcome:
+        if islands.count < 2:
+            return RuleOutcome(islands, [self.flag(f"only {islands.count} island, so a lung has no fissure")])
+        distance = islands.centroid_distance_mm(1, 2)
+        if distance >= self.min_centroid_distance_mm:
+            return RuleOutcome(islands)
+        return RuleOutcome(
+            islands,
+            [self.flag(f"the two largest islands are {distance:.0f} mm apart, under {self.min_centroid_distance_mm:.0f} mm")],
+        )
+
+    def flag(self, reason: str) -> ReviewFlag:
+        return ReviewFlag(rule=self.kind, reason=reason)
+
+
+IslandRule = Annotated[
+    DropSmallIslands | FlagExtraIslands | FlagCloseMainIslands,
+    Field(discriminator="kind"),
+]
 
 
 def default_island_rules() -> list[IslandRule]:
-    return [DropSmallIslands(), FlagExtraIslands()]
+    return [DropSmallIslands(), FlagExtraIslands(), FlagCloseMainIslands()]
 
 
 class IslandReport(BaseModel):
