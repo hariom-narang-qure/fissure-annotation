@@ -10,7 +10,7 @@ How:
   - 0 is background in a NIfTI label map, so it means "not removed".
   - A step gets a label even when it removed nothing, so the legend lists every step that ran.
 - A voxel removed by two steps keeps the label of the first step.
-  - Lines are removed from the per-view masks before the sheet is made, so a later step can see the same voxel again.
+  - Each rule only sees what the rules before it kept, so today this never happens. It keeps the map well defined for a step that does.
 """
 
 import numpy as np

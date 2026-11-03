@@ -51,6 +51,19 @@ class Rule(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class DropIslandsUnder(Rule):
+    """an island under a fixed size is a stub or speck, left from a line that only one view traced
+
+    It runs before `DropSmallIslands`, so a sheet of only specks does not keep its largest speck as "the largest".
+    """
+
+    kind: Literal["drop_islands_under"] = "drop_islands_under"
+    min_voxels: int = Field(default=150, ge=0)
+
+    def apply(self, islands: Islands) -> RuleOutcome:
+        return RuleOutcome(islands.without(np.flatnonzero(islands.sizes < self.min_voxels)))
+
+
 class DropSmallIslands(Rule):
     "an island under a share of the largest island is not a fissure"
 
@@ -122,13 +135,21 @@ class FlagCloseMainIslands(Rule):
 
 
 IslandRule = Annotated[
-    DropSmallIslands | FlagExtraIslands | FlagTooFewIslands | FlagCloseMainIslands,
+    DropIslandsUnder | DropSmallIslands | FlagExtraIslands | FlagTooFewIslands | FlagCloseMainIslands,
     Field(discriminator="kind"),
 ]
 
 
 def default_island_rules() -> list[IslandRule]:
-    return [DropSmallIslands(), FlagExtraIslands(), FlagTooFewIslands(), FlagCloseMainIslands()]
+    "two extra-island flags, so a scan with many extra islands stands out from one with a single third island"
+    return [
+        DropIslandsUnder(),
+        DropSmallIslands(),
+        FlagExtraIslands(max_islands=2),
+        FlagExtraIslands(max_islands=3),
+        FlagTooFewIslands(),
+        FlagCloseMainIslands(),
+    ]
 
 
 class IslandReport(BaseModel):
