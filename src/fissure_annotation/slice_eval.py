@@ -7,11 +7,12 @@ Why:
 How:
 1. The cases are the eval folders whose meta lists the slice test (eval_set.cases_for).
 2. Every slice of each view with ground truth is rendered from the scan, as the pipeline renders it (imaging/slices.py).
-3. Each ground truth slice gets its own stack, one conversation each (`stack_around`).
-   - The stack is the slice with `size - 1` neighbours `slice_step` apart, half before and half after.
-     - Near the edge of the scan the stack shifts inwards instead.
-   - Only that slice is scored. The neighbours are context.
-   - Neighbouring ground truth slices so annotate the same slices more than once. That costs more, and keeps the code simple.
+3. Ground truth slices that fit in one stack share one conversation (`stacks_for`).
+   - The slices of a view are split into runs, where each slice is `slice_step` after the one before (`runs_a_step_apart`).
+   - Each run is cut into batches of at most `size` slices. A batch is the scored slices of one stack.
+   - A batch shorter than `size` gets neighbours `slice_step` apart, so the agent always sees `size` slices (`pad_short_batch`).
+     - The neighbours go half before and half after, and near the edge of the scan the stack shifts inwards instead.
+   - Only the ground truth slices of a stack are scored. Its other slices are context.
 4. Each stack runs `repeats` times, since the agent is not deterministic.
    - A stack with a log is not run again, so a stopped eval is finished by running it again.
 5. Each scored slice is compared with its reference lines (imaging/line_scores.py), within `tolerance_mm`.
@@ -20,6 +21,7 @@ How:
 """
 
 import csv
+from itertools import batched
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -60,22 +62,63 @@ class EvalStack(BaseModel):
     case: str
     view: View
     slices: list[int]
-    scored: int  # the ground truth slice the stack is around
+    scored: list[int]  # the ground truth slices of the stack
 
     @property
     def name(self) -> str:
-        return f"{self.case}/{self.view}/slice_{self.scored:04d}"
+        return f"{self.case}/{self.view}/stack_{self.slices[0]:04d}_{self.slices[-1]:04d}"
 
 
-def stack_around(index: int, step: int, size: int, slice_count: int) -> list[int]:
-    "the slice with neighbours `step` apart, half before and half after, shifted inwards at the edges of the scan"
-    first = index - (size // 2) * step
-    # Shifts are whole steps, so the slice stays on the stack's slices and inside it.
+def runs_a_step_apart(indices: list[int], step: int) -> list[list[int]]:
+    """the slices split wherever a slice is not exactly `step` after the one before it
+
+        runs_a_step_apart([3, 6, 9, 20, 23, 40], step=3) == [[3, 6, 9], [20, 23], [40]]
+
+    The slices are sorted first, so a slice can only continue the run just before it.
+    Every earlier run ended before that one started, so only the last slice of the last run is checked.
+    """
+    runs: list[list[int]] = []
+    for index in sorted(indices):
+        continues_the_last_run = bool(runs) and index == runs[-1][-1] + step
+        if continues_the_last_run:
+            runs[-1].append(index)
+        else:
+            runs.append([index])
+    return runs
+
+
+def pad_short_batch(batch: list[int], step: int, size: int, slice_count: int) -> list[int]:
+    """the batch with neighbours `step` apart added, until the stack has `size` slices; a full batch comes back as it is
+
+        pad_short_batch([200], step=3, size=5, slice_count=400) == [194, 197, 200, 203, 206]
+        pad_short_batch([20, 23], step=3, size=5, slice_count=400) == [17, 20, 23, 26, 29]
+        pad_short_batch([2], step=3, size=5, slice_count=400) == [2, 5, 8, 11, 14]  # shifted inwards from slice 0
+
+    The agent then sees `size` slices, as in the pipeline, also for a lone ground truth slice.
+    """
+    first = batch[0] - (size - len(batch)) // 2 * step
+    # Shifts are whole steps, so the batch stays on the stack's slices and inside it.
     while first < 0:
         first += step
     while first + (size - 1) * step > slice_count - 1 and first - step >= 0:
         first -= step
     return [z for z in range(first, first + size * step, step) if z < slice_count]  # a scan shorter than a stack
+
+
+def stacks_for(indices: list[int], step: int, size: int, slice_count: int) -> list[tuple[list[int], list[int]]]:
+    """each stack as (its slices, the ground truth slices it scores)
+
+        stacks_for([3, 6, 9, 12, 15, 18, 40], step=3, size=5, slice_count=400) == [
+            ([3, 6, 9, 12, 15], [3, 6, 9, 12, 15]),  # a full batch of the first run
+            ([12, 15, 18, 21, 24], [18]),  # the rest of that run, with neighbours around it
+            ([34, 37, 40, 43, 46], [40]),  # a run of one slice
+        ]
+    """
+    return [
+        (pad_short_batch(list(batch), step, size, slice_count), list(batch))
+        for run in runs_a_step_apart(indices, step)
+        for batch in batched(run, size)
+    ]
 
 
 class SliceEvalRun:
@@ -97,15 +140,14 @@ class SliceEvalRun:
 
     def stacks(self) -> list[EvalStack]:
         stacks = [
-            EvalStack(case=case.name, view=view, slices=self.stack_around(case, view, index), scored=index)
+            EvalStack(case=case.name, view=view, slices=slices, scored=scored)
             for case in self.cases.values()
             for view in case.views()
-            for index in case.indices_of(view)
+            for slices, scored in stacks_for(
+                case.indices_of(view), self.settings.slice_step, self.settings.annotator.size, self.slice_count(case, view)
+            )
         ]
         return stacks[: self.settings.max_stacks]
-
-    def stack_around(self, case: EvalCase, view: View, index: int) -> list[int]:
-        return stack_around(index, self.settings.slice_step, self.settings.annotator.size, self.slice_count(case, view))
 
     def conversations(self) -> list[tuple[EvalStack, int]]:
         return [(stack, repeat) for stack in self.stacks() for repeat in range(self.settings.repeats)]
@@ -168,18 +210,21 @@ def traced_on(folder: StackFolder, slices_dir: Path, index: int, shape: tuple[in
     return read_gray(path) > 0 if path.exists() else np.zeros(shape, dtype=bool)
 
 
-def score_stack(run: SliceEvalRun, stack: EvalStack, repeat: int) -> ScoreRow:
+def score_stack(run: SliceEvalRun, stack: EvalStack, repeat: int) -> list[ScoreRow]:
     case = run.cases[stack.case]
     spacing = pixel_spacing(case, stack.view)
-    reference = read_gray(case.gt_path(stack.view, stack.scored)) > 0
-    traced = traced_on(run.folder(stack, repeat), run.slices_dir(stack.case, stack.view), stack.scored, reference.shape)
-    score = score_lines(traced, reference, spacing, run.settings.tolerance_mm)
-    return ScoreRow(case=stack.case, view=stack.view, slice_index=stack.scored, repeat=repeat, **score._asdict())
+    rows = []
+    for index in stack.scored:
+        reference = read_gray(case.gt_path(stack.view, index)) > 0
+        traced = traced_on(run.folder(stack, repeat), run.slices_dir(stack.case, stack.view), index, reference.shape)
+        score = score_lines(traced, reference, spacing, run.settings.tolerance_mm)
+        rows.append(ScoreRow(case=stack.case, view=stack.view, slice_index=index, repeat=repeat, **score._asdict()))
+    return rows
 
 
 def score_rows(run: SliceEvalRun) -> list[ScoreRow]:
     "only finished conversations are scored"
-    return [score_stack(run, stack, repeat) for stack, repeat in run.conversations() if run.is_done(stack, repeat)]
+    return [row for stack, repeat in run.conversations() if run.is_done(stack, repeat) for row in score_stack(run, stack, repeat)]
 
 
 def write_score_rows(rows: list[ScoreRow], path: Path) -> None:
@@ -221,6 +266,6 @@ def summary_lines(run: SliceEvalRun, rows: list[ScoreRow]) -> list[str]:
 
 def plan_lines(run: SliceEvalRun) -> list[str]:
     stacks = run.stacks()
-    lines = [f"{stack.name}: slices {stack.slices}" for stack in stacks]
-    lines.append(f"{len(stacks)} stacks x {run.settings.repeats} repeats, one scored slice each")
+    lines = [f"{stack.name}: slices {stack.slices}, scores {stack.scored}" for stack in stacks]
+    lines.append(f"{len(stacks)} stacks x {run.settings.repeats} repeats, {sum(len(s.scored) for s in stacks)} scored slices")
     return lines
