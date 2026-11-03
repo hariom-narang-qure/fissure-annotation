@@ -13,17 +13,15 @@ How:
    - The files are the ones the one-slice agent writes (waypoints.RunFolder), so the masks are scored and stacked the same way.
 4. One log covers the whole conversation, see `StackFolder.stack_log_path`.
    - It is kept apart from the per-slice logs, so one conversation is not priced once per slice.
-5. With guides, the first message shows the dashed edges of a band around each fissure (`OverviewGuides`).
-   - The tracer always follows the ridge of the clean slice, never a drawn guide.
-6. The agent can look at the CT or at its ridge map (`CtPictures`, `RidgePictures`).
+5. The agent looks at the ridge map of each slice (`RidgePictures`), not at the CT.
    - The ridge map is what the tracer follows (imaging/tracing.py), so it shows what a trace will stick to.
    - Every picture the agent sees uses it: the first message, zooms and trace overlays.
    - The tracer always runs on the CT slice, since the ridge of a ridge map is not the ridge of the CT.
+   - On the ridge map, lobe guides made no clear difference, so there are none (docs/stack_agent_experiments.md, section 3).
 """
 
 import json
 from pathlib import Path
-from typing import Literal
 
 import numpy as np
 from jaxtyping import UInt8
@@ -44,14 +42,12 @@ from fissure_annotation.agent import (
 from fissure_annotation.imaging.overlay import red_overlay
 from fissure_annotation.imaging.png import read_gray, save_png
 from fissure_annotation.imaging.slices import slice_file_name
-from fissure_annotation.imaging.guides import Colour, draw_band_outlines
 from fissure_annotation.imaging.ticks import crop_with_ticks
 from fissure_annotation.imaging.tracing import ridge_picture, trace_mask
 from fissure_annotation.tools import STACK_TOOLS
 from fissure_annotation.waypoints import Fissure, RunFolder, SliceWaypoints
 
-DEFAULT_PROMPT = Path(__file__).parents[2] / "prompts" / "stack_agent.txt"
-RIDGE_PROMPT = Path(__file__).parents[2] / "prompts" / "stack_agent_ridge.txt"  # for the ridge map without guides
+RIDGE_PROMPT = Path(__file__).parents[2] / "prompts" / "stack_agent_ridge.txt"
 STACK_OVERLAY_SCALE = 2  # one overlay per slice comes back, so they are smaller than the one-slice agent's 3
 
 
@@ -82,42 +78,11 @@ def instructions_for(settings: AgentSettings, prompt: Path, count: int, step_mm:
     )
 
 
-class CtPictures(BaseModel):
-    kind: Literal["ct"] = "ct"
-
-    def picture(self, image: UInt8[np.ndarray, "h w"]) -> UInt8[np.ndarray, "h w"]:
-        return image
-
-
 class RidgePictures(BaseModel):
-    kind: Literal["ridge"] = "ridge"
     display_max: float = Field(default=30.0, gt=0)  # lung-window grey levels shown as white, 30 is about 70 HU
 
     def picture(self, image: UInt8[np.ndarray, "h w"]) -> UInt8[np.ndarray, "h w"]:
         return ridge_picture(image, self.display_max)
-
-
-Pictures = CtPictures | RidgePictures
-
-
-class NoGuides:
-    "the first message shows each slice as it is"
-
-    def overview(self, slice_index: int, picture: np.ndarray) -> np.ndarray:
-        return picture
-
-
-class OverviewGuides(NoGuides):
-    """the first message shows each slice with the dashed edges of its fissure bands (fissure_hints.py)
-
-    Zooms and trace overlays stay clean, so the agent judges a line on pixels with nothing drawn on them.
-    """
-
-    def __init__(self, bands: dict[int, UInt8[np.ndarray, "h w"]], colour_of_fissure: dict[int, Colour]):
-        self.bands, self.colour_of_fissure = bands, colour_of_fissure
-
-    def overview(self, slice_index: int, picture: np.ndarray) -> np.ndarray:
-        return draw_band_outlines(picture, self.bands[slice_index], self.colour_of_fissure)
 
 
 class StackSession:
@@ -129,15 +94,13 @@ class StackSession:
         folder: StackFolder,
         slices_dir: Path,
         slice_indices: list[int],
-        guides: NoGuides | None = None,
-        pictures: Pictures | None = None,
+        pictures: RidgePictures | None = None,
     ):
         self.settings, self.folder, self.slice_indices = settings, folder, slice_indices
         self.slice_pngs = {z: slices_dir / slice_file_name(z) for z in slice_indices}
         self.images: dict[int, UInt8[np.ndarray, "h w"]] = {z: read_gray(png) for z, png in self.slice_pngs.items()}
-        pictures = CtPictures() if pictures is None else pictures
+        pictures = RidgePictures() if pictures is None else pictures
         self.pictures = {z: pictures.picture(image) for z, image in self.images.items()}  # what the agent sees; the tracer uses images
-        self.guides = NoGuides() if guides is None else guides
         self.traces = 0
 
     def run_tool(self, name: str, arguments: dict) -> list[dict]:
@@ -203,7 +166,7 @@ def first_input(session: StackSession) -> list[dict]:
     height, width = next(iter(session.images.values())).shape
     content = [text(f"{len(session.slice_indices)} {session.settings.view} slices, each {width}x{height} px, in order.")]
     for z in session.slice_indices:
-        content += [text(f"Slice {z}:"), image(Image.fromarray(session.guides.overview(z, session.pictures[z])))]
+        content += [text(f"Slice {z}:"), image(Image.fromarray(session.pictures[z]))]
     return [{"role": "user", "content": content}]
 
 
@@ -214,11 +177,10 @@ def run_stack(
     slices_dir: Path,
     slice_indices: list[int],
     step_mm: float,
-    prompt: Path = DEFAULT_PROMPT,
-    guides: NoGuides | None = None,
-    pictures: Pictures | None = None,
+    prompt: Path = RIDGE_PROMPT,
+    pictures: RidgePictures | None = None,
 ) -> StackLog:
-    session = StackSession(settings, folder, slices_dir, slice_indices, guides, pictures)
+    session = StackSession(settings, folder, slices_dir, slice_indices, pictures)
     instructions = instructions_for(settings, prompt, len(slice_indices), step_mm)
     log = StackLog(slice_indices=slice_indices, summary=None, traces=0, steps=0, input_tokens=0, output_tokens=0, calls=[])
 

@@ -19,7 +19,7 @@ from tqdm import tqdm
 
 from fissure_annotation.agent import AgentSettings
 from fissure_annotation.imaging.slices import VIEW_AXIS, View
-from fissure_annotation.stack_agent import RIDGE_PROMPT, Pictures, RidgePictures, StackFolder, run_stack
+from fissure_annotation.stack_agent import RIDGE_PROMPT, RidgePictures, StackFolder, run_stack
 
 
 class ViewWork(BaseModel):
@@ -63,7 +63,7 @@ class StackAnnotator(BaseModel):
     size: int = Field(default=5, ge=1)
     prompt: Path = RIDGE_PROMPT
     # white from 20 lung-window grey levels, the cap of terra experiment 09
-    pictures: Pictures = Field(default_factory=lambda: RidgePictures(display_max=20), discriminator="kind")
+    pictures: RidgePictures = RidgePictures(display_max=20)
 
     def is_done(self, work: ViewWork, stack: list[int]) -> bool:
         return StackFolder(root=work.run_dir).stack_log_path(stack).exists()

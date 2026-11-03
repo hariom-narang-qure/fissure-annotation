@@ -3,7 +3,7 @@ import pytest
 
 from fissure_annotation.agent import AgentSettings
 from fissure_annotation.imaging.png import read_gray, save_png
-from fissure_annotation.stack_agent import OverviewGuides, StackFolder, run_stack
+from fissure_annotation.stack_agent import StackFolder, run_stack
 from test_agent import FakeModel
 
 STACK = [4, 8, 12]
@@ -77,40 +77,7 @@ def test_zoom_needs_a_slice_of_the_stack(slices_dir, tmp_path):
     assert model.requests[1]["input"][0]["output"][0]["type"] == "input_image"
 
 
-def test_guides_are_drawn_on_the_first_message_only_and_the_trace_follows_the_clean_slice(slices_dir, tmp_path):
-    import base64
-    import io
-
-    from PIL import Image
-
-    def pixels(part):
-        return np.asarray(Image.open(io.BytesIO(base64.b64decode(part["image_url"].split(",")[1]))).convert("RGB"))
-
-    def has_yellow(picture):
-        return ((picture == (255, 220, 0)).all(axis=-1)).any()
-
-    masks = {z: np.zeros((512, 512), dtype=np.uint8) for z in STACK}
-    for z in STACK:
-        masks[z][300 + z - 5 : 300 + z + 6, 100:400] = 2  # a band whose edges sit right next to the bright line
-    model = FakeModel(
-        [("zoom", {"slice": 8, "x0": 90, "y0": 280, "x1": 410, "y1": 340, "scale": 1})],
-        [("trace_points", {"fissures": [line_on(z) for z in STACK]})],
-        [("finish", {"summary": "x"})],
-    )
-    guides = OverviewGuides(masks, {2: (255, 220, 0)})
-    folder = StackFolder(root=tmp_path / "run")
-    run_stack(model, AgentSettings(), folder, slices_dir, STACK, step_mm=3.2, guides=guides)
-    first_images = [p for p in model.requests[0]["input"][0]["content"] if p["type"] == "input_image"]
-    zoom_image = model.requests[1]["input"][0]["output"][0]
-    assert has_yellow(pixels(first_images[0]))
-    assert not has_yellow(pixels(zoom_image))
-    overlays = [p for p in model.requests[2]["input"][0]["output"] if p["type"] == "input_image"]
-    assert not any(has_yellow(pixels(p)) for p in overlays)
-    traced = read_gray(folder.mask_path(slices_dir / "slice_0008.png")) > 0
-    assert set(np.nonzero(traced)[0]) == {308}
-
-
-def test_with_ridge_pictures_the_agent_sees_the_ridge_map_and_the_trace_still_follows_the_ct(slices_dir, tmp_path):
+def test_the_agent_sees_the_ridge_map_and_the_trace_still_follows_the_ct(slices_dir, tmp_path):
     import base64
     import io
 
