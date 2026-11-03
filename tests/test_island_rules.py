@@ -87,7 +87,6 @@ def test_a_config_can_list_the_rules_by_kind():
         DropIslandsUnder(),
         DropSmallIslands(),
         FlagExtraIslands(max_islands=2),
-        FlagExtraIslands(max_islands=3),
         FlagTooFewIslands(),
         FlagCloseMainIslands(),
     ]
@@ -103,15 +102,6 @@ def test_a_sheet_of_only_specks_keeps_nothing():
     rules = [DropIslandsUnder(min_voxels=150), DropSmallIslands()]
     assert apply_island_rules(rules, islands.mask, np.eye(4), RemovedVoxels(islands.mask.shape)).kept.sum() == 0
 
-
-def test_four_islands_are_flagged_by_both_extra_island_rules():
-    sheet = sheet_of_blocks((1000, 0), (600, 10), (300, 20), (300, 30))
-    rules = [FlagExtraIslands(max_islands=2), FlagExtraIslands(max_islands=3)]
-    flags = apply_island_rules(rules, sheet, np.eye(4), RemovedVoxels(sheet.shape)).report.flags
-    assert [flag.reason for flag in flags] == [
-        "4 islands are left, more than 2",
-        "4 islands are left, more than 3",
-    ]
 
 
 def two_islands_mm_apart(distance_mm):

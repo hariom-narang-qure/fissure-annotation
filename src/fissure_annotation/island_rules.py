@@ -141,12 +141,10 @@ IslandRule = Annotated[
 
 
 def default_island_rules() -> list[IslandRule]:
-    "two extra-island flags, so a scan with many extra islands stands out from one with a single third island"
     return [
         DropIslandsUnder(),
         DropSmallIslands(),
         FlagExtraIslands(max_islands=2),
-        FlagExtraIslands(max_islands=3),
         FlagTooFewIslands(),
         FlagCloseMainIslands(),
     ]
