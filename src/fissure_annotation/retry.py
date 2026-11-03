@@ -23,9 +23,16 @@ How:
 - Every wait is reported through `on_wait` with the policy's name, so a run shows why it is waiting.
   - That is also where notifications can hook in later.
 - Retrying a request is safe: nothing is saved before a response arrives, and `previous_response_id` points at a response that exists.
+
+Stopping a run:
+- The waits sleep on one `STOPPING` event, not `time.sleep`, and no request starts once it is set.
+- `stop_waits_on_ctrl_c` sets it on Ctrl-C, so a run stops at once.
+  - Without it, a run waiting for credit ignored Ctrl-C for up to an hour.
+  - The thread pool of the stacks waits for its threads when it exits, and every queued stack still started after that.
 """
 
-import time
+import signal
+import threading
 from collections.abc import Callable
 
 from pydantic import BaseModel, Field
@@ -50,6 +57,8 @@ WAIT_FOR_FLEX_CAPACITY = "wait_for_flex_capacity"
 WAIT_FOR_CREDIT = "wait_for_credit"
 RETRY_TRANSIENT_ERRORS = "retry_transient_errors"
 
+STOPPING = threading.Event()
+
 OnWait = Callable[[str, BaseException, int, float], None]  # the policy, the error, the attempt, the wait in seconds
 
 
@@ -59,6 +68,30 @@ class RetrySettings(BaseModel):
     credit_max_wait_seconds: float = Field(default=3600.0, ge=0)
     retries: int = Field(default=6, ge=0)  # retries of a transient error, after the first attempt
     retry_wait_seconds: float = Field(default=2.0, ge=0)  # the first wait for a transient error, which doubles each time
+
+
+class RunStopped(KeyboardInterrupt):
+    "a KeyboardInterrupt, so every caller treats it like Ctrl-C, and no policy or scan retry catches it"
+
+
+def sleep_unless_stopping(seconds: float) -> None:
+    if STOPPING.wait(seconds):
+        raise RunStopped
+
+
+def raise_if_stopping() -> None:
+    if STOPPING.is_set():
+        raise RunStopped
+
+
+def stop_on_interrupt(signal_number: int, frame) -> None:
+    STOPPING.set()
+    raise KeyboardInterrupt
+
+
+def stop_waits_on_ctrl_c() -> None:
+    "a signal handler can only be set from the main thread, so a script calls this before it starts a run"
+    signal.signal(signal.SIGINT, stop_on_interrupt)
 
 
 def is_out_of_capacity(error: BaseException) -> bool:
@@ -133,8 +166,9 @@ def with_retries[T](
     request: Callable[[], T],
     settings: RetrySettings,
     on_wait: OnWait | None = None,
-    sleep: Callable[[float], None] = time.sleep,
+    sleep: Callable[[float], None] = sleep_unless_stopping,
 ) -> T:
+    raise_if_stopping()
     capacity = wait_for_flex_capacity(settings, on_wait, sleep)
     credit = wait_for_credit(settings, on_wait, sleep)
     transient = retry_transient_errors(settings, on_wait, sleep)

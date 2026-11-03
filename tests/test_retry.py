@@ -1,10 +1,15 @@
+import threading
+import time
+
 import pytest
 
 from fissure_annotation.retry import (
     RETRY_TRANSIENT_ERRORS,
+    STOPPING,
     WAIT_FOR_CREDIT,
     WAIT_FOR_FLEX_CAPACITY,
     RetrySettings,
+    RunStopped,
     is_out_of_capacity,
     is_out_of_credit,
     is_transient,
@@ -136,3 +141,38 @@ def test_every_wait_is_reported_with_its_policy_attempt_and_wait():
     assert reports[0] == (WAIT_FOR_FLEX_CAPACITY, 1, 60.0)
     assert reports[1] == (WAIT_FOR_CREDIT, 1, 300.0)
     assert reports[2][:2] == (RETRY_TRANSIENT_ERRORS, 1)
+
+
+@pytest.fixture
+def stopping():
+    yield STOPPING
+    STOPPING.clear()
+
+
+def test_a_wait_for_credit_ends_as_soon_as_the_run_stops(stopping):
+    "a run waiting for credit used to ignore Ctrl-C for up to an hour"
+    request, _ = failing([OutOfCredit()] * 10)
+    raised = []
+
+    def waiting_stack():
+        try:
+            with_retries(request, settings(credit_wait_seconds=3600.0))
+        except RunStopped:
+            raised.append(RunStopped)
+
+    stack = threading.Thread(target=waiting_stack)
+    stack.start()
+    time.sleep(0.2)
+    started = time.monotonic()
+    stopping.set()
+    stack.join(timeout=5)
+    assert raised == [RunStopped]
+    assert time.monotonic() - started < 1
+
+
+def test_no_request_starts_once_the_run_stops(stopping):
+    request, calls = failing([])
+    stopping.set()
+    with pytest.raises(RunStopped):
+        with_retries(request, settings())
+    assert calls == []

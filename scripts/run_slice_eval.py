@@ -15,10 +15,20 @@ The scores go to scores.csv in out_dir, and the summary is printed.
 import sys
 
 from fissure_annotation.experiment import model_client
+from fissure_annotation.retry import stop_waits_on_ctrl_c
 from fissure_annotation.settings import load_settings
-from fissure_annotation.slice_eval import SliceEval, SliceEvalRun, plan_lines, run_slice_eval, score_rows, summary_lines, write_score_rows
+from fissure_annotation.slice_eval import (
+    SliceEval,
+    SliceEvalRun,
+    plan_lines,
+    run_slice_eval,
+    score_rows,
+    summary_lines,
+    write_score_rows,
+)
 
 if __name__ == "__main__":
+    stop_waits_on_ctrl_c()
     settings = load_settings(SliceEval, sys.argv[1:])
     if settings.dry_run:
         print("\n".join(plan_lines(SliceEvalRun(settings))))

@@ -15,10 +15,12 @@ Needs in the environment, for the model calls (not for the plan):
 import sys
 
 from fissure_annotation.experiment import model_client
+from fissure_annotation.retry import stop_waits_on_ctrl_c
 from fissure_annotation.scan_list import ScanListJob, plan_lines, run_scan_list
 from fissure_annotation.settings import load_settings
 
 if __name__ == "__main__":
+    stop_waits_on_ctrl_c()
     job = load_settings(ScanListJob, sys.argv[1:])
     if job.dry_run:
         print("\n".join(plan_lines(job)))
