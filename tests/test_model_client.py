@@ -10,3 +10,4 @@ def test_portkey_client_leaves_retries_to_retry_py(monkeypatch):
 def test_portkey_client_waits_as_long_as_flex(monkeypatch):
     monkeypatch.setenv("PORTKEY_API_KEY", "test-key")
     assert portkey_client().openai_client.timeout == FLEX_TIMEOUT_SECONDS
+

@@ -13,6 +13,7 @@
 import base64
 import io
 import json
+import sys
 from pathlib import Path
 from typing import Literal
 
@@ -206,10 +207,14 @@ def request_settings(settings: AgentSettings, instructions: str | None = None, t
 
 
 def report_retry(settings: AgentSettings, slice_index: int):
-    "tqdm.write prints above the progress bar of the run instead of breaking it"
+    """tqdm.write prints above the progress bar of the run instead of breaking it.
+    - It goes to stderr, like the bar.
+    - stdout is block-buffered when the run is piped into a log, which held every line back until the buffer filled.
+    """
 
     def report(policy: str, error: BaseException, attempt: int, wait: float) -> None:
-        tqdm.write(f"{settings.view} slice {slice_index}: {policy}, attempt {attempt}, next in {wait:.0f}s, {describe(error)}")
+        line = f"{settings.view} slice {slice_index}: {policy}, attempt {attempt}, next in {wait:.0f}s, {describe(error)}"
+        tqdm.write(line, file=sys.stderr)
 
     return report
 

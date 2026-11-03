@@ -167,7 +167,7 @@ class NoFlexCapacityModel(FakeModel):
 def test_a_slice_waits_for_flex_capacity_and_says_so(slices_dir, tmp_path, capsys):
     log = run(NoFlexCapacityModel([FINISH]), slices_dir, tmp_path, retry=RetrySettings(capacity_wait_seconds=0.0))
     assert log.summary == "one fissure"
-    assert "axial slice 7: wait_for_flex_capacity, attempt 2, next in 0s" in capsys.readouterr().out
+    assert "axial slice 7: wait_for_flex_capacity, attempt 2, next in 0s" in capsys.readouterr().err
 
 
 class FlexModel(FakeModel):
