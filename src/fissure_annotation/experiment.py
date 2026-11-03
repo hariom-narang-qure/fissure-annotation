@@ -60,7 +60,14 @@ FLEX_TIMEOUT_SECONDS = 900.0  # flex answers slowly, OpenAI suggests 15 minutes 
 
 
 def portkey_client() -> Portkey:
-    return Portkey(api_key=os.environ["PORTKEY_API_KEY"])
+    """Portkey builds its OpenAI client with max_retries=1 and the 600 s timeout, and takes neither as an argument.
+    - So both are set on that client after it is built, the same as for openai_client.
+    - The resources of Portkey read them from that client at each request.
+    """
+    client = Portkey(api_key=os.environ["PORTKEY_API_KEY"])
+    client.openai_client.max_retries = 0
+    client.openai_client.timeout = FLEX_TIMEOUT_SECONDS
+    return client
 
 
 def openai_client() -> OpenAI:
