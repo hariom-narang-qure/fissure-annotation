@@ -1,0 +1,18 @@
+# The slice test of the eval set in data/eval, with the pipeline's agent: gpt-6.1-terra on the ridge map, stacks of 5, slices 3 apart.
+# - The agent settings match configs/pipeline_terra_ridge_step3.yaml. Change them here to score another variant.
+# - The ground truth is gpt-6.1-sol's traces, to be cleaned by hand. See meta.json of each case.
+# - Prices are terra list prices from Portkey's price table.
+eval_root: data/eval
+out_dir: work/slice_eval/terra_ridge_step3
+agent:
+  model: "@openai/gpt-6.1-terra"
+annotator:
+  size: 5
+  prompt: prompts/stack_agent_ridge.txt
+  pictures: {display_max: 20}
+slice_step: 3
+repeats: 2
+workers: 8
+prices:
+  default: {input: 1.00, cached_input: 0.05, cache_write: 1.25, output: 5.00}
+  flex: {input: 0.50, cached_input: 0.025, cache_write: 0.625, output: 2.50}

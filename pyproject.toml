@@ -29,5 +29,6 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "dvc[s3]>=3.67.1",
     "pytest>=9.1.1",
 ]

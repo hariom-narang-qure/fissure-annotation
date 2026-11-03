@@ -17,7 +17,8 @@ Every experiment on the fissure stack agent, run 2026-10-29 on LOCCA scans with 
 - Most runs have 2 repeats. Two numbers in a cell are the two repeats.
 - Costs are list prices from the logged tokens, unless marked as a Portkey estimate.
 - Where each experiment lives is in "Where to find each run" at the end.
-- The ground truth here is the manual lobe border. A later eval scores against fissure traces instead, so its numbers are on another scale.
+- The ground truth here is the manual lobe border.
+  - The slice eval on main (`scripts/run_slice_eval.py`) scores against fissure traces instead, so its numbers are on another scale.
 
 ## Baseline
 

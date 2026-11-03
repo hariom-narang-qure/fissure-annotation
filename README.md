@@ -48,6 +48,17 @@ Research only, not diagnostic.
 - What happens on an error is in `src/fissure_annotation/retry.py` (per request) and `scan_list.py` step 7 (per scan).
 - The experiments that led to this setup are in `docs/stack_agent_experiments.md`.
 
+## Slice eval
+
+    uv run dvc pull
+    uv run --env-file .env python scripts/run_slice_eval.py --config configs/slice_eval.yaml
+
+- The eval set is in `data/eval/`, one folder per scan with `scan.nii.gz`, `gt/<view>/` masks and `meta.json`.
+  - DVC keeps it in `s3://qmuse-data/hariom-narang/fissure-annotation/dvc`, with the AWS credentials of `~/.aws`.
+- The slice test runs the agent in stacks around each ground truth slice, and scores its traces against the masks within 3 mm.
+- `--dry-run true` prints the stacks. `--max-stacks 2 --repeats 1` tries a few cheaply.
+- The ground truth is gpt-6.1-sol's traces for now, see `scripts/build_slice_eval_set.py`.
+
 ## Earlier pipeline
 
 The lobe-mask scroll agent, reviewer and one-shot variants were removed.
