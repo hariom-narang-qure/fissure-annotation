@@ -41,6 +41,11 @@ Research only, not diagnostic.
 - This is the current setup: gpt-6.1-terra, stacks of 5 slices on the ridge map, slices 3 apart, all three views.
 - Each scan gets `work/scans/<uid>/<run_name>/`, with the sheet in `post/sheet.nii.gz`.
 - `--dry-run true` prints the slices and an estimated cost, and calls nothing.
+- For a long list, run it detached, so it outlives the login, and add `--agent.service-tier flex` for the cheaper tier:
+
+      tmux new -d -s fissure 'uv run --env-file .env python scripts/run_scan_list.py --config configs/pipeline_terra_ridge_step3.yaml --csv <scans.csv> --agent.service-tier flex'
+
+- What happens on an error is in `src/fissure_annotation/retry.py` (per request) and `scan_list.py` step 7 (per scan).
 - The experiments that led to this setup are in `docs/stack_agent_experiments.md`.
 
 ## Earlier pipeline

@@ -1,3 +1,4 @@
+import pytest
 import hashlib
 from pathlib import Path
 
@@ -29,7 +30,7 @@ def job_for(tmp_path: Path, uids: list[str], **settings) -> ScanListJob:
         csv=write_csv(tmp_path / "list.csv", uids),
         scans_dir=tmp_path / "scans",
         out_root=tmp_path / "out",
-        **settings,
+        **{"scan_retry_wait_seconds": 0.0, **settings},
     )
 
 
@@ -70,7 +71,7 @@ def test_a_failing_scan_is_recorded_and_the_next_scan_still_runs(tmp_path, monke
 
     monkeypatch.setattr(scan_list, "process_scan", process)
     statuses = run_scan_list(job_for(tmp_path, ["a", "b"]), client=None)
-    assert ran == ["a", "b"]
+    assert ran == ["a", "a", "a", "b"]  # three attempts, see retry_scan
     assert statuses["a"].state == "failed" and "boom" in statuses["a"].error
     assert statuses["b"].state == "done"
 
@@ -174,3 +175,42 @@ def test_the_lobes_are_segmented_first_and_post_processing_prefers_lobes_put_in_
     monkeypatch.setattr(scan_list, "post_process_fissure_masks", lambda job: calls.append(("post", job.lobes)))
     scan_list.process_scan(job_for(tmp_path, ["1.2"]), "1.2", folder, client=None)
     assert calls == [("segment", folder.segmented_lobes_path), ("agent", None), ("post", folder.lobes_path)]
+
+
+def failing_scans(errors):
+    "process_scan raises the given errors in turn, then finishes"
+    calls = []
+
+    def process(job, uid, folder, client):
+        calls.append(uid)
+        if len(calls) <= len(errors):
+            raise errors[len(calls) - 1]
+
+    return process, calls
+
+
+def test_a_scan_that_raises_is_run_again_and_its_attempts_are_recorded(tmp_path, monkeypatch, capsys):
+    process, calls = failing_scans([RuntimeError("a bug"), RuntimeError("a bug")])
+    monkeypatch.setattr(scan_list, "process_scan", process)
+    status = scan_list.run_one(job_for(tmp_path, ["a"], scan_attempts=3), "a", client=None)
+    assert status.state == "done" and status.attempts == 3 and len(calls) == 3
+    assert "a: retry_scan, attempt 1, next in 0s, RuntimeError: a bug" in capsys.readouterr().out
+
+
+def test_after_the_last_attempt_the_scan_fails_and_the_list_goes_on(tmp_path, monkeypatch):
+    process, calls = failing_scans([RuntimeError("a bug")] * 2)
+    monkeypatch.setattr(scan_list, "process_scan", process)
+    statuses = run_scan_list(job_for(tmp_path, ["a", "b"], scan_attempts=2), client=None)
+    assert statuses["a"].state == "failed" and statuses["a"].attempts == 2
+    assert statuses["b"].state == "done" and calls == ["a", "a", "b"]
+
+
+def test_a_skipped_scan_and_a_ctrl_c_are_not_run_again(tmp_path, monkeypatch):
+    process, calls = failing_scans([scan_list.ScanSkipped("slices of 5 mm")])
+    monkeypatch.setattr(scan_list, "process_scan", process)
+    assert scan_list.run_one(job_for(tmp_path, ["a"]), "a", client=None).state == "skipped" and len(calls) == 1
+    process, calls = failing_scans([KeyboardInterrupt()])
+    monkeypatch.setattr(scan_list, "process_scan", process)
+    with pytest.raises(KeyboardInterrupt):
+        scan_list.run_one(job_for(tmp_path, ["b"]), "b", client=None)
+    assert len(calls) == 1

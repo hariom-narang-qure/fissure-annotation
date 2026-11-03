@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from fissure_annotation.retry import RetrySettings
 from fissure_annotation.agent import AgentSettings, run_slice
 from fissure_annotation.imaging.png import read_gray, save_png
 from fissure_annotation.waypoints import RunFolder
@@ -138,7 +139,7 @@ class FlakyModel(FakeModel):
 
 def test_a_transient_provider_error_is_retried_and_the_slice_finishes(slices_dir, tmp_path):
     model = FlakyModel([TRACE], [FINISH])
-    log = run(model, slices_dir, tmp_path, retry_wait_seconds=0.0)
+    log = run(model, slices_dir, tmp_path, retry=RetrySettings(retry_wait_seconds=0.0))
     assert log.summary == "one fissure" and log.traces == 1
 
 
@@ -164,9 +165,9 @@ class NoFlexCapacityModel(FakeModel):
 
 
 def test_a_slice_waits_for_flex_capacity_and_says_so(slices_dir, tmp_path, capsys):
-    log = run(NoFlexCapacityModel([FINISH]), slices_dir, tmp_path, capacity_wait_seconds=0.0)
+    log = run(NoFlexCapacityModel([FINISH]), slices_dir, tmp_path, retry=RetrySettings(capacity_wait_seconds=0.0))
     assert log.summary == "one fissure"
-    assert "axial slice 7: no flex capacity, wait 2 in 0s" in capsys.readouterr().out
+    assert "axial slice 7: wait_for_flex_capacity, attempt 2, next in 0s" in capsys.readouterr().out
 
 
 class FlexModel(FakeModel):
