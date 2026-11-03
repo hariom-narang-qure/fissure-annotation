@@ -53,7 +53,7 @@ class DropSmallIslands(Rule):
         if islands.count == 0:
             return RuleOutcome(islands)
         too_small = islands.sizes < self.min_share_of_largest * islands.sizes[0]
-        return RuleOutcome(islands.without(np.flatnonzero(too_small) + 1))
+        return RuleOutcome(islands.without(np.flatnonzero(too_small)))
 
 
 IslandRule = Annotated[DropSmallIslands, Field(discriminator="kind")]

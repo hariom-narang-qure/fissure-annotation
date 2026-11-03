@@ -1,7 +1,8 @@
-"""The islands of a fissure sheet: its 26-connected pieces, numbered by size.
+"""The islands of a fissure sheet: its 26-connected pieces, ranked by size.
 
-- Island 1 is the largest, island 2 the next, and so on.
-  - Rules that look at "the two main islands" then read the first two numbers.
+- Rank 0 is the largest island, rank 1 the next, and so on.
+  - So `sizes[rank]` is the size of the island of that rank, with no offset.
+  - Background voxels have the rank `BACKGROUND`, which is -1 since 0 is an island.
 - Centroids are in scanner millimetres, through the affine, so distances do not depend on the voxel spacing.
 """
 
@@ -11,26 +12,37 @@ from scipy import ndimage
 
 from fissure_annotation.imaging.lines import CONNECT_26
 
-IslandNumbers = Int[np.ndarray, " n"]
+BACKGROUND = -1
+
+IslandRanks = Int[np.ndarray, " n"]
+RankVolume = Int[np.ndarray, "x y z"]
 
 
-def labels_numbered_by_size(
-    mask: Bool[np.ndarray, "x y z"],
-) -> tuple[Int[np.ndarray, "x y z"], Int[np.ndarray, " n"]]:
-    "the island number of every voxel (0 is background), and the voxel count of each island, largest first"
+def connected_pieces(mask: Bool[np.ndarray, "x y z"]) -> tuple[Int[np.ndarray, "x y z"], Int[np.ndarray, " n"]]:
+    """the piece of every voxel, and the voxel count of each piece
+
+    `ndimage.label` numbers pieces from 1 and gives background 0.
+    The pieces are shifted down by one here, so this is the only place that knows about it.
+    """
     labels, count = ndimage.label(mask, CONNECT_26)
-    sizes = np.bincount(labels.ravel(), minlength=count + 1)[1:]
+    pieces = labels - 1
+    return pieces, np.bincount(pieces[mask], minlength=count)
+
+
+def ranks_by_size(mask: Bool[np.ndarray, "x y z"]) -> tuple[RankVolume, Int[np.ndarray, " n"]]:
+    "the rank of every voxel's island, and the voxel count of each rank"
+    pieces, sizes = connected_pieces(mask)
     largest_first = np.argsort(sizes, kind="stable")[::-1]
-    new_number = np.zeros(count + 1, dtype=np.int32)
-    new_number[largest_first + 1] = np.arange(1, count + 1)
-    return new_number[labels], sizes[largest_first]
+    rank_of_piece = np.empty(len(sizes), dtype=np.int32)
+    rank_of_piece[largest_first] = np.arange(len(sizes))
+    ranks = np.full(mask.shape, BACKGROUND, dtype=np.int32)
+    ranks[mask] = rank_of_piece[pieces[mask]]
+    return ranks, sizes[largest_first]
 
 
 class Islands:
-    "the islands of one sheet, with island i+1 having sizes[i] voxels"
-
     def __init__(self, mask: Bool[np.ndarray, "x y z"], affine: Float[np.ndarray, "4 4"]):
-        self.labels, self.sizes = labels_numbered_by_size(mask)
+        self.ranks, self.sizes = ranks_by_size(mask)
         self.affine = affine
 
     @property
@@ -39,13 +51,13 @@ class Islands:
 
     @property
     def mask(self) -> Bool[np.ndarray, "x y z"]:
-        return self.labels > 0
+        return self.ranks != BACKGROUND
 
-    def without(self, numbers: IslandNumbers) -> "Islands":
-        return Islands(self.mask & ~np.isin(self.labels, numbers), self.affine)
+    def without(self, ranks: IslandRanks) -> "Islands":
+        return Islands(self.mask & ~np.isin(self.ranks, ranks), self.affine)
 
-    def centroid_mm(self, number: int) -> Float[np.ndarray, "3"]:
-        voxel = np.array(ndimage.center_of_mass(self.labels == number))
+    def centroid_mm(self, rank: int) -> Float[np.ndarray, "3"]:
+        voxel = np.array(ndimage.center_of_mass(self.ranks == rank))
         return self.affine[:3, :3] @ voxel + self.affine[:3, 3]
 
     def centroid_distance_mm(self, first: int, second: int) -> float:
