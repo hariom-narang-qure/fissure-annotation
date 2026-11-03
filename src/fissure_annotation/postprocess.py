@@ -1,22 +1,18 @@
-"""Clean the per-view fissure masks and blend them into one thin sheet.
+"""Blend the per-view fissure masks into one thin sheet, and trim it with the island rules.
 
 Why:
 - The masks from `make_fissure_mask` come from lines traced slice by slice, so they have false lines and look ragged in 3D.
   - False lines are traces of the body outline, the table, the diaphragm and the hilum.
   - Ragged means a stack of separate lines with holes between them, most of all where a fissure lies almost flat in the slice plane.
-- Each view is blind to some fissures, so the views are blended after cleaning and not before.
+- The sheet is cut into islands, and all trimming is done by rules on the islands, so one report says what each rule did.
 
 How:
-0. The lung lobes are segmented from the scan (`segmentation.py`), unless the lobes file exists already.
-1. The lungs are the union of the lobes, and a region is made of them with a margin of `lung_margin_mm`.
-2. The lines of each view are judged on their own (`imaging/lines.py`).
-   - A line with less than `min_share_inside` of its voxels in the region is removed, any other line is kept whole.
-   - Those are the outline of the body and the table, which a few views trace.
-   - Removed lines of all views are saved as one mask, so they can be checked.
-3. The kept masks are OR-ed into one mask.
-4. The union is blurred along the sheet and thinned to one voxel (`imaging/sheet.py`).
-5. Pieces of the sheet under `min_piece_voxels` are dropped and saved as `removed_pieces.nii.gz`.
-   - They are stubs and specks left over from lines that only one view traced, and a fissure is a large surface.
+1. The masks of the views are OR-ed into one mask.
+2. The union is blurred along the sheet and thinned to one voxel (`imaging/sheet.py`).
+3. The island rules trim the sheet, or flag the scan for review (`island_rules.py`).
+4. Everything removed is saved as one label map, `removed.nii.gz`, with a label per rule (`removals.py`).
+   - `report.json` has the legend of the labels, the island sizes and the review flags.
+   - Both sit in the scan's output folder, next to `sheet.nii.gz`.
 
 Annotating every `slice_step`-th slice cuts the cost of the model by about that factor.
 - Fewer slices give less density on a sheet and longer holes between the lines.
@@ -28,28 +24,21 @@ Annotating every `slice_step`-th slice cuts the cost of the model by about that 
   - The settings of the full run lost 11% to 13% of the sheet at that step.
 - Settings that the config sets are never changed.
 
-The lobes file is kept, so a second run on the same scan does not segment again.
-A segmenter other than TotalSegmentator can be passed in, it only has to follow `Segmenter`.
-Lines are judged by the lungs and not by the lobe interfaces, which an earlier version used.
-- The interfaces of the segmentation are off in severe emphysema.
-  - A real left oblique fissure was 18 mm from its interface, and the old rule removed it.
-- On the other scans the interface rule removed the same outlines of the body and little else, since the later filters drop lone short lines anyway.
+An earlier version removed lines mostly outside the lungs of a TotalSegmentator lobe segmentation, before blending.
+- It was dropped, since TotalSegmentator is not trusted on severe scans.
+- It did remove real junk: on 53 earlier runs, without it 24 sheets gained traces of the body outline and the table.
+  - Those traces form large islands, of up to 13k voxels, that the size rules keep.
+  - So those scans are flagged by the extra-island rules for now, and a better rule for them is open.
 """
 
-from functools import partial
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
-from jaxtyping import Bool
-from pydantic import Field
+from jaxtyping import Bool, UInt8
+from pydantic import BaseModel, Field
 
 from fissure_annotation.fissure_mask import view_mask_path
-from fissure_annotation.imaging.lines import (
-    keep_large_pieces,
-    keep_lines_mostly_inside,
-)
-from fissure_annotation.imaging.lobes import distance_to_mask_mm
 from fissure_annotation.imaging.sheet import (
     DEFAULT_MIN_STRENGTH,
     DEFAULT_SIGMA_ACROSS_VOXELS,
@@ -58,12 +47,13 @@ from fissure_annotation.imaging.sheet import (
     oriented_sheet,
 )
 from fissure_annotation.imaging.slices import View
-from fissure_annotation.segmentation import (
-    LUNG_LOBES,
-    Segmenter,
-    TotalSegmentatorSettings,
-    run_totalsegmentator,
+from fissure_annotation.island_rules import (
+    IslandReport,
+    IslandRule,
+    apply_island_rules,
+    default_island_rules,
 )
+from fissure_annotation.removals import RemovalStep, RemovedVoxels
 from fissure_annotation.settings import ExperimentSettings
 
 VoxelMask = Bool[np.ndarray, "x y z"]
@@ -86,36 +76,41 @@ class SheetSettings(ExperimentSettings):
     )
 
 
+class PostProcessReport(BaseModel):
+    "everything the post-process did to one scan, saved as report.json in the scan's folder"
+
+    removed: list[RemovalStep]  # the legend of removed.nii.gz
+    islands: IslandReport
+
+    @property
+    def needs_review(self) -> bool:
+        return self.islands.needs_review
+
+    def label_of(self, step: str) -> int:
+        return next(removal.label for removal in self.removed if removal.step == step)
+
+
 class PostProcessJob(ExperimentSettings):
-    nifti: Path  # the scan the masks were made from, the lobes are segmented from it
     mask_path: Path  # the combined mask of make_fissure_mask, the mask of each view is found next to it
     views: list[View] = ["axial"]
-    lobes: Path  # where the lung lobes are saved, and read from when the file exists already
     out_dir: Path
-    lung_margin_mm: float = 5.0  # the lungs as the segmentation has them are a little tight, and the bases are not exact
-    min_share_inside: float = Field(
-        default=0.5, ge=0, le=1
-    )  # a line with less than this share of its voxels near the lungs is removed
     slice_step: int = Field(
         default=1, ge=1
     )  # the model annotated every slice_step-th slice of each view, 2 for every other slice
-    min_piece_voxels: int = Field(
-        default=150, ge=0
-    )  # pieces of the final sheet under this size are dropped, 0 keeps all of them
     sheet: SheetSettings = SheetSettings()
-    totalsegmentator: TotalSegmentatorSettings = TotalSegmentatorSettings()
+    island_rules: list[IslandRule] = Field(default_factory=default_island_rules)  # run in this order, see island_rules.py
 
     @property
     def sheet_path(self) -> Path:
         return self.out_dir / "sheet.nii.gz"
 
     @property
-    def removed_lines_path(self) -> Path:
-        return self.out_dir / "removed_lines.nii.gz"
+    def removed_path(self) -> Path:
+        return self.out_dir / "removed.nii.gz"
 
     @property
-    def removed_pieces_path(self) -> Path:
-        return self.out_dir / "removed_pieces.nii.gz"
+    def report_path(self) -> Path:
+        return self.out_dir / "report.json"
 
 
 def sheet_parameters(settings: SheetSettings, slice_step: int) -> dict[str, float]:
@@ -136,56 +131,40 @@ def read_mask(path: Path) -> tuple[VoxelMask, nib.Nifti1Image]:
     return np.asarray(image.dataobj) > 0, image
 
 
-def write_mask_like(mask: VoxelMask, reference: nib.Nifti1Image, path: Path) -> None:
+def write_mask_like(mask: VoxelMask | UInt8[np.ndarray, "x y z"], reference: nib.Nifti1Image, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     image = nib.Nifti1Image(mask.astype(np.uint8), reference.affine, reference.header)
     image.set_data_dtype(np.uint8)
     nib.save(image, path)
 
 
-def require_same_grid(
-    reference: nib.Nifti1Image, other: nib.Nifti1Image, name: str
-) -> None:
-    if reference.shape != other.shape or not np.allclose(
-        reference.affine, other.affine
-    ):
-        raise ValueError(f"{name} is not on the voxel grid of the lobes")
+def require_same_grid(reference: nib.Nifti1Image, other: nib.Nifti1Image, name: str) -> None:
+    if reference.shape != other.shape or not np.allclose(reference.affine, other.affine):
+        raise ValueError(f"{name} is not on the voxel grid of the first view")
 
 
-def near_the_lungs(lobes: nib.Nifti1Image, margin_mm: float) -> VoxelMask:
-    spacing_mm = tuple(float(s) for s in lobes.header.get_zooms()[:3])
-    lungs = np.asarray(lobes.dataobj) > 0
-    return distance_to_mask_mm(lungs, spacing_mm) <= margin_mm
-
-
-def segmented_lobes(job: PostProcessJob, segmenter: Segmenter) -> nib.Nifti1Image:
-    if not job.lobes.exists():
-        segmenter(job.nifti, LUNG_LOBES, job.lobes)
-    return nib.load(job.lobes)
-
-
-def post_process_fissure_masks(
-    job: PostProcessJob, segmenter: Segmenter | None = None
-) -> Path:
-    segmenter = segmenter or partial(
-        run_totalsegmentator, settings=job.totalsegmentator
-    )
-    lobes = segmented_lobes(job, segmenter)
-    near_lungs = near_the_lungs(lobes, job.lung_margin_mm)
-    kept_masks, removed_masks = [], []
-    for view in job.views:
+def read_view_masks(job: PostProcessJob) -> tuple[list[VoxelMask], nib.Nifti1Image]:
+    "the mask of each view, and the image of the first view, whose grid the others must share"
+    first_mask, reference = read_mask(view_mask_path(job.mask_path, job.views[0]))
+    masks = [first_mask]
+    for view in job.views[1:]:
         path = view_mask_path(job.mask_path, view)
         mask, image = read_mask(path)
-        require_same_grid(lobes, image, path.name)
-        kept, removed = keep_lines_mostly_inside(mask, near_lungs, job.min_share_inside)
-        kept_masks.append(kept)
-        removed_masks.append(removed)
+        require_same_grid(reference, image, path.name)
+        masks.append(mask)
+    return masks, reference
+
+
+def post_process_fissure_masks(job: PostProcessJob) -> Path:
+    masks, image = read_view_masks(job)
     sheet = oriented_sheet(
-        np.logical_or.reduce(kept_masks),
+        np.logical_or.reduce(masks),
         **sheet_parameters(job.sheet, job.slice_step),
     )
-    sheet, small_pieces = keep_large_pieces(sheet, job.min_piece_voxels)
-    write_mask_like(np.logical_or.reduce(removed_masks), image, job.removed_lines_path)
-    write_mask_like(small_pieces, image, job.removed_pieces_path)
-    write_mask_like(sheet, image, job.sheet_path)
+    removed = RemovedVoxels(sheet.shape)
+    trimmed = apply_island_rules(job.island_rules, sheet, image.affine, removed)
+    write_mask_like(removed.labels, image, job.removed_path)
+    report = PostProcessReport(removed=removed.steps, islands=trimmed.report)
+    job.report_path.write_text(report.model_dump_json(indent=2))
+    write_mask_like(trimmed.kept, image, job.sheet_path)
     return job.sheet_path

@@ -47,3 +47,7 @@ These apply to code, docs, READMEs, PRs and commits.
   - `src/fissure_annotation/imaging/guides.py` draws the dashed band edges on a slice.
   - The band helpers are in `src/fissure_annotation/imaging/lobes.py`, and `OverviewGuides` is in `src/fissure_annotation/stack_agent.py`.
   - Get a file with `git show experiments/2026-10:<path>`.
+- The TotalSegmentator lobe segmentation and the lines filter that used it were removed from the pipeline. Main at `52c36a5` keeps them.
+  - `src/fissure_annotation/segmentation.py` runs TotalSegmentator behind the `Segmenter` call.
+  - `keep_lines_mostly_inside` in `src/fissure_annotation/imaging/lines.py` removed lines mostly outside the lungs.
+  - Get a file with `git show 52c36a5:<path>`.

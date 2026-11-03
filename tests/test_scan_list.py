@@ -156,25 +156,14 @@ def test_a_failed_scan_prints_the_error_and_not_only_failed(tmp_path, monkeypatc
     assert "failed: RuntimeError: flex is unavailable" in capsys.readouterr().out
 
 
-def test_post_processing_uses_lobes_put_in_the_folder_and_otherwise_the_segmented_ones(tmp_path):
-    folder = ScanFolder(root=tmp_path, uid="1.2", run="stack")
-    assert folder.post_processing_lobes_path == folder.segmented_lobes_path
-    folder.folder.mkdir(parents=True)
-    folder.lobes_path.touch()
-    assert folder.post_processing_lobes_path == folder.lobes_path
-
-
-def test_the_lobes_are_segmented_first_and_post_processing_prefers_lobes_put_in_the_folder(tmp_path, monkeypatch):
+def test_a_scan_is_annotated_then_post_processed_into_its_post_folder(tmp_path, monkeypatch):
     calls = []
     folder = ScanFolder(root=tmp_path / "out", uid="1.2")
-    folder.folder.mkdir(parents=True)
-    folder.lobes_path.touch()  # manual lobes, for post-processing only
     monkeypatch.setattr(scan_list, "prepare_scan", lambda job, uid, folder: folder.scan_path)
-    monkeypatch.setattr(scan_list, "run_totalsegmentator", lambda scan, structures, out, settings: calls.append(("segment", out)))
-    monkeypatch.setattr(scan_list, "make_fissure_mask", lambda job, client: calls.append(("agent", None)))
-    monkeypatch.setattr(scan_list, "post_process_fissure_masks", lambda job: calls.append(("post", job.lobes)))
+    monkeypatch.setattr(scan_list, "make_fissure_mask", lambda job, client: calls.append(("agent", job.mask_path)))
+    monkeypatch.setattr(scan_list, "post_process_fissure_masks", lambda job: calls.append(("post", job.out_dir)))
     scan_list.process_scan(job_for(tmp_path, ["1.2"]), "1.2", folder, client=None)
-    assert calls == [("segment", folder.segmented_lobes_path), ("agent", None), ("post", folder.lobes_path)]
+    assert calls == [("agent", folder.mask_path), ("post", folder.post_dir)]
 
 
 def failing_scans(errors):
