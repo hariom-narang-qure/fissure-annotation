@@ -108,3 +108,22 @@ def test_guides_are_drawn_on_the_first_message_only_and_the_trace_follows_the_cl
     assert not any(has_yellow(pixels(p)) for p in overlays)
     traced = read_gray(folder.mask_path(slices_dir / "slice_0008.png")) > 0
     assert set(np.nonzero(traced)[0]) == {308}
+
+
+def test_with_ridge_pictures_the_agent_sees_the_ridge_map_and_the_trace_still_follows_the_ct(slices_dir, tmp_path):
+    import base64
+    import io
+
+    from PIL import Image
+
+    from fissure_annotation.imaging.tracing import ridge_picture
+    from fissure_annotation.stack_agent import RidgePictures
+
+    model = FakeModel([("trace_points", {"fissures": [line_on(z) for z in STACK]})], [("finish", {"summary": "x"})])
+    folder = StackFolder(root=tmp_path / "run")
+    run_stack(model, AgentSettings(), folder, slices_dir, STACK, step_mm=3.2, pictures=RidgePictures(display_max=30))
+    first = next(p for p in model.requests[0]["input"][0]["content"] if p["type"] == "input_image")
+    seen = np.asarray(Image.open(io.BytesIO(base64.b64decode(first["image_url"].split(",")[1]))).convert("L"))
+    assert (seen == ridge_picture(read_gray(slices_dir / "slice_0004.png"), 30)).all()
+    traced = read_gray(folder.mask_path(slices_dir / "slice_0008.png")) > 0
+    assert set(np.nonzero(traced)[0]) == {308}

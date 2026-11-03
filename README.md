@@ -34,6 +34,15 @@ Research only, not diagnostic.
 - The slice PNGs and the agent's points, masks and logs go to `<mask name>_work/<view>/` next to the mask, or to `--work-dir`.
 - Running the same command again skips slices that already have a log, so a run that failed halfway can be finished.
 
+## Scan pipeline
+
+    uv run --env-file .env python scripts/run_scan_list.py --config configs/pipeline_terra_ridge_step3.yaml --csv <scans.csv>
+
+- This is the current setup: gpt-6.1-terra, stacks of 5 slices on the ridge map, slices 3 apart, all three views.
+- Each scan gets `work/scans/<uid>/<run_name>/`, with the sheet in `post/sheet.nii.gz`.
+- `--dry-run true` prints the slices and an estimated cost, and calls nothing.
+- The experiments that led to this setup are in `docs/stack_agent_experiments.md`.
+
 ## Earlier pipeline
 
 The lobe-mask scroll agent, reviewer and one-shot variants were removed.
