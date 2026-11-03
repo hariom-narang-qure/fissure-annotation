@@ -25,6 +25,11 @@ How:
    - After the last attempt the scan is recorded as failed in its `status.json`, with the traceback, and the list goes on.
    - A skipped scan is not retried, and neither is a Ctrl-C.
    - Each retry prints one line naming the policy, so a run shows it, and notifications can hook in there later.
+7. Every run folder gets an `AGENTS.md` that says what its files are and how to review them (`write_folder_guide`).
+   - A client opening one scan's result can then convert it with its own skills, such as a viewer.
+   - `CLAUDE.md` only imports it, as `@AGENTS.md`, since Claude Code reads CLAUDE.md. An import survives copies and uploads, where a link may not.
+   - The text is one template for all scans, `run_folder_agents.md`. The facts of a scan stay in its files.
+   - It is written again on every run, also for a scan that is done already, so a changed template reaches old folders.
 
 The agent costs about the same per slice, so `estimated_cost_usd` is the number of slices times a price per slice.
 - The price is for gpt-6.1-terra with the stack agent: $0.005 to $0.006 per slice on the 40 eval slices (docs/stack_agent_experiments.md).
@@ -83,6 +88,10 @@ class ScanListJob(ExperimentSettings):
     sheet: SheetSettings = SheetSettings()
 
 
+FOLDER_GUIDE = Path(__file__).parent / "run_folder_agents.md"
+CLAUDE_IMPORT = "@AGENTS.md\n"
+
+
 class ScanFolder(BaseModel):
     root: Path
     uid: str
@@ -111,6 +120,14 @@ class ScanFolder(BaseModel):
     @property
     def status_path(self) -> Path:
         return self.folder / "status.json"
+
+    @property
+    def agents_path(self) -> Path:
+        return self.folder / "AGENTS.md"
+
+    @property
+    def claude_path(self) -> Path:
+        return self.folder / "CLAUDE.md"
 
     @property
     def is_done(self) -> bool:
@@ -226,6 +243,12 @@ def process_scan(job: ScanListJob, uid: str, folder: ScanFolder, client) -> None
     post_process_fissure_masks(post_job_for(job, folder))
 
 
+def write_folder_guide(folder: ScanFolder) -> None:
+    folder.folder.mkdir(parents=True, exist_ok=True)
+    folder.agents_path.write_text(FOLDER_GUIDE.read_text())
+    folder.claude_path.write_text(CLAUDE_IMPORT)
+
+
 def record_status(folder: ScanFolder, status: ScanStatus) -> None:
     folder.folder.mkdir(parents=True, exist_ok=True)
     folder.status_path.write_text(status.model_dump_json(indent=2))
@@ -277,6 +300,7 @@ def run_one(job: ScanListJob, uid: str, client, sleep=time.sleep) -> ScanStatus:
             error=traceback.format_exc(),
         )
     record_status(folder, status)
+    write_folder_guide(folder)
     return status
 
 
@@ -292,7 +316,9 @@ def run_scan_list(job: ScanListJob, client, uids: list[str] | None = None) -> di
     statuses: dict[str, ScanStatus] = {}
     uids = uids_of(job) if uids is None else uids
     for number, uid in enumerate(uids, start=1):
-        if ScanFolder(root=job.out_root, uid=uid, run=job.run_name).is_done:
+        folder = ScanFolder(root=job.out_root, uid=uid, run=job.run_name)
+        if folder.is_done:
+            write_folder_guide(folder)
             print(f"[{number}/{len(uids)}] {uid} done already", flush=True)
             continue
         print(f"[{number}/{len(uids)}] {uid} starting", flush=True)

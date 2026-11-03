@@ -203,3 +203,33 @@ def test_a_skipped_scan_and_a_ctrl_c_are_not_run_again(tmp_path, monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         scan_list.run_one(job_for(tmp_path, ["b"]), "b", client=None)
     assert len(calls) == 1
+
+
+def test_every_run_folder_gets_the_guide_and_a_claude_md_that_imports_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(scan_list, "process_scan", lambda job, uid, folder, client: None)
+    job = job_for(tmp_path, ["a"], run_name="run")
+    run_scan_list(job, client=None)
+    folder = ScanFolder(root=job.out_root, uid="a", run="run")
+    assert folder.agents_path.read_text() == scan_list.FOLDER_GUIDE.read_text()
+    assert folder.claude_path.read_text() == "@AGENTS.md\n"
+
+
+def test_a_done_scan_gets_the_current_guide_without_running_again(tmp_path, monkeypatch):
+    job = job_for(tmp_path, ["a"])
+    folder = ScanFolder(root=job.out_root, uid="a")
+    folder.post_dir.mkdir(parents=True)
+    folder.sheet_path.touch()
+    folder.agents_path.write_text("an old guide")
+    monkeypatch.setattr(scan_list, "process_scan", lambda *args: pytest.fail("a done scan ran again"))
+    run_scan_list(job, client=None)
+    assert folder.agents_path.read_text() == scan_list.FOLDER_GUIDE.read_text()
+
+
+def test_the_guide_names_the_files_the_pipeline_writes(tmp_path):
+    "a renamed output should fail here, so the guide does not go stale"
+    folder = ScanFolder(root=tmp_path, uid="a")
+    guide = scan_list.FOLDER_GUIDE.read_text()
+    for path in [folder.scan_path, folder.mask_path, folder.sheet_path, folder.status_path]:
+        assert str(path.relative_to(folder.folder)) in guide
+    for name in ["post/removed.nii.gz", "post/report.json", "run/stack_logs", "run/points"]:
+        assert name in guide
