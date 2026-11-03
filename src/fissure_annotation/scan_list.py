@@ -13,7 +13,7 @@ How:
 3. The lobes are segmented with TotalSegmentator into `totalseg_lobes.nii.gz`, unless that file exists.
    - Post-processing trims lines outside the lungs with it. The agent does not use it.
 4. For each scan, the agent is run on every `slice_step`-th slice of each view (`make_fissure_mask`).
-   - The `annotator` of the config annotates one slice at a time, or stacks of neighbours (annotators.py).
+   - The `annotator` annotates them in stacks of neighbours (annotators.py).
 5. Then the masks are cleaned and blended into one sheet (`post_process_fissure_masks`).
    - It uses `lobes.nii.gz` when the folder has one, for example manual lobes put there before the run.
    - Otherwise it uses the TotalSegmentator lobes.
@@ -40,7 +40,7 @@ import nibabel as nib
 from pydantic import BaseModel, Field
 
 from fissure_annotation.agent import AgentSettings
-from fissure_annotation.annotators import Annotator, OneSliceAnnotator
+from fissure_annotation.annotators import StackAnnotator
 from fissure_annotation.fissure_mask import FissureMaskJob, make_fissure_mask
 from fissure_annotation.imaging.resample import (
     resample_z_to_pixel_spacing,
@@ -75,7 +75,7 @@ class ScanListJob(ExperimentSettings):
     limit: int | None = None  # only the first scans of the list, to try the run on a few
     dry_run: bool = False  # the script prints the plan and calls nothing
     agent: AgentSettings = AgentSettings()
-    annotator: Annotator = Field(default_factory=OneSliceAnnotator, discriminator="kind")
+    annotator: StackAnnotator = StackAnnotator()
     sheet: SheetSettings = SheetSettings()
     totalsegmentator: TotalSegmentatorSettings = TotalSegmentatorSettings()
 

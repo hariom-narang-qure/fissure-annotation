@@ -9,7 +9,7 @@
 - With `slice_step` above 1 only every slice_step-th slice of the range, and the last one, goes through the agent.
   - The cost drops by about that factor, and the slices in between are empty.
   - Post-processing needs the same `slice_step`, since the lines are then further apart.
-- The `annotator` decides how the chosen slices are annotated, one at a time or in stacks of neighbours (annotators.py).
+- The `annotator` annotates the chosen slices in stacks of neighbours (annotators.py).
 """
 
 from pathlib import Path
@@ -19,7 +19,7 @@ from jaxtyping import Bool
 from pydantic import Field, model_validator
 
 from fissure_annotation.agent import AgentSettings
-from fissure_annotation.annotators import Annotator, OneSliceAnnotator, ViewWork
+from fissure_annotation.annotators import StackAnnotator, ViewWork
 from fissure_annotation.imaging.masks import save_mask_like
 from fissure_annotation.imaging.png import read_gray
 from fissure_annotation.imaging.slices import View, slice_file_name, write_slices
@@ -41,7 +41,7 @@ class FissureMaskJob(ExperimentSettings):
     )  # 2 annotates every other slice of the range of each view, and always the last one
     workers: int = 16
     agent: AgentSettings = AgentSettings()
-    annotator: Annotator = Field(default_factory=OneSliceAnnotator, discriminator="kind")
+    annotator: StackAnnotator = StackAnnotator()
 
     @model_validator(mode="after")
     def slice_range_needs_a_single_view(self):

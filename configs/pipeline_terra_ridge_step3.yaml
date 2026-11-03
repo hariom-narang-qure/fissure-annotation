@@ -12,7 +12,6 @@ workers: 8  # stacks in flight, each with 5 slices
 agent:
   model: "@openai/gpt-6.1-terra"
 annotator:
-  kind: stack
   size: 5
   prompt: prompts/stack_agent_ridge.txt
   pictures: {kind: ridge, display_max: 20}
