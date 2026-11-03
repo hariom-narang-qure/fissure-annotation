@@ -12,13 +12,14 @@ How:
 2. The lines of each view are judged on their own (`imaging/lines.py`).
    - A line with less than `min_share_inside` of its voxels in the region is removed, any other line is kept whole.
    - Those are the outline of the body and the table, which a few views trace.
-   - Removed lines of all views are saved as one mask, so they can be checked.
 3. The kept masks are OR-ed into one mask.
 4. The union is blurred along the sheet and thinned to one voxel (`imaging/sheet.py`).
-5. Pieces of the sheet under `min_piece_voxels` are dropped and saved as `removed_pieces.nii.gz`.
+5. Pieces of the sheet under `min_piece_voxels` are dropped.
    - They are stubs and specks left over from lines that only one view traced, and a fissure is a large surface.
 6. The island rules trim what is left, or flag the scan for review (`island_rules.py`).
-   - Removed islands are saved as `removed_islands.nii.gz`, and what the rules did as `island_report.json`.
+7. Everything removed is saved as one label map, `removed.nii.gz`, with a label per step (`postprocess_report.py`).
+   - `report.json` has the legend of the labels, the island sizes and the review flags.
+   - Both sit in the scan's output folder, next to `sheet.nii.gz`.
 
 Annotating every `slice_step`-th slice cuts the cost of the model by about that factor.
 - Fewer slices give less density on a sheet and longer holes between the lines.
@@ -43,7 +44,7 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
-from jaxtyping import Bool
+from jaxtyping import Bool, UInt8
 from pydantic import Field
 
 from fissure_annotation.fissure_mask import view_mask_path
@@ -62,9 +63,11 @@ from fissure_annotation.imaging.sheet import (
 from fissure_annotation.imaging.slices import View
 from fissure_annotation.island_rules import (
     IslandRule,
+    TrimmedSheet,
     apply_island_rules,
     default_island_rules,
 )
+from fissure_annotation.postprocess_report import PostProcessReport, RemovedVoxels
 from fissure_annotation.segmentation import (
     LUNG_LOBES,
     Segmenter,
@@ -118,20 +121,12 @@ class PostProcessJob(ExperimentSettings):
         return self.out_dir / "sheet.nii.gz"
 
     @property
-    def removed_lines_path(self) -> Path:
-        return self.out_dir / "removed_lines.nii.gz"
+    def removed_path(self) -> Path:
+        return self.out_dir / "removed.nii.gz"
 
     @property
-    def removed_pieces_path(self) -> Path:
-        return self.out_dir / "removed_pieces.nii.gz"
-
-    @property
-    def removed_islands_path(self) -> Path:
-        return self.out_dir / "removed_islands.nii.gz"
-
-    @property
-    def island_report_path(self) -> Path:
-        return self.out_dir / "island_report.json"
+    def report_path(self) -> Path:
+        return self.out_dir / "report.json"
 
 
 def sheet_parameters(settings: SheetSettings, slice_step: int) -> dict[str, float]:
@@ -152,7 +147,7 @@ def read_mask(path: Path) -> tuple[VoxelMask, nib.Nifti1Image]:
     return np.asarray(image.dataobj) > 0, image
 
 
-def write_mask_like(mask: VoxelMask, reference: nib.Nifti1Image, path: Path) -> None:
+def write_mask_like(mask: VoxelMask | UInt8[np.ndarray, "x y z"], reference: nib.Nifti1Image, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     image = nib.Nifti1Image(mask.astype(np.uint8), reference.affine, reference.header)
     image.set_data_dtype(np.uint8)
@@ -202,9 +197,19 @@ def post_process_fissure_masks(
     )
     sheet, small_pieces = keep_large_pieces(sheet, job.min_piece_voxels)
     trimmed = apply_island_rules(job.island_rules, sheet, image.affine)
-    write_mask_like(np.logical_or.reduce(removed_masks), image, job.removed_lines_path)
-    write_mask_like(small_pieces, image, job.removed_pieces_path)
-    write_mask_like(trimmed.removed, image, job.removed_islands_path)
-    job.island_report_path.write_text(trimmed.report.model_dump_json(indent=2))
+    removed = removed_by_step(np.logical_or.reduce(removed_masks), small_pieces, trimmed)
+    write_mask_like(removed.labels, image, job.removed_path)
+    report = PostProcessReport(removed=removed.steps, islands=trimmed.report)
+    job.report_path.write_text(report.model_dump_json(indent=2))
     write_mask_like(trimmed.kept, image, job.sheet_path)
     return job.sheet_path
+
+
+def removed_by_step(lines_outside: VoxelMask, small_pieces: VoxelMask, trimmed: TrimmedSheet) -> RemovedVoxels:
+    "in the order the steps ran, which decides the label of each step"
+    removed = RemovedVoxels(lines_outside.shape)
+    removed.add("lines_outside_lungs", lines_outside)
+    removed.add("small_pieces", small_pieces)
+    for removal in trimmed.removals:
+        removed.add(removal.rule, removal.removed)
+    return removed

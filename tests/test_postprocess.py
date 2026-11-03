@@ -3,13 +3,14 @@ import numpy as np
 import pytest
 
 from fissure_annotation.imaging.lobes import LEFT_LOWER, LEFT_UPPER
-from fissure_annotation.island_rules import DropSmallIslands, IslandReport
+from fissure_annotation.island_rules import DropSmallIslands
 from fissure_annotation.postprocess import (
     PostProcessJob,
     SheetSettings,
     post_process_fissure_masks,
     sheet_parameters,
 )
+from fissure_annotation.postprocess_report import PostProcessReport
 from fissure_annotation.segmentation import LUNG_LOBES
 
 SIZE = 40
@@ -24,6 +25,15 @@ def save(volume, path, affine=np.eye(4)):
 
 def load(path):
     return np.asarray(nib.load(path).dataobj) > 0
+
+
+def read_report(job):
+    return PostProcessReport.model_validate_json(job.report_path.read_text())
+
+
+def removed_by(job, step):
+    labels = np.asarray(nib.load(job.removed_path).dataobj)
+    return labels == read_report(job).label_of(step)
 
 
 def lobes_meeting_at_the_boundary():
@@ -69,7 +79,7 @@ def test_a_line_outside_the_lungs_is_removed_and_the_rest_becomes_a_sheet(tmp_pa
 
     post_process_fissure_masks(job)
 
-    removed, sheet = load(job.removed_lines_path), load(job.sheet_path)
+    removed, sheet = removed_by(job, "lines_outside_lungs"), load(job.sheet_path)
     assert (removed == far_line()).all()
     assert sheet.sum() > 0 and abs(np.nonzero(sheet)[0] - BOUNDARY_X).max() <= 1
 
@@ -90,7 +100,7 @@ def test_the_views_are_cleaned_on_their_own_and_blended_into_one_sheet(tmp_path)
 
     sheet = load(job.sheet_path)
     assert sheet[:, 8:17].any() and sheet[:, 23:32].any()  # both views are in the sheet
-    assert (load(job.removed_lines_path) == far_line()).all()
+    assert (removed_by(job, "lines_outside_lungs") == far_line()).all()
 
 
 def test_masks_on_another_grid_than_the_lobes_are_refused(tmp_path):
@@ -192,7 +202,7 @@ def test_small_pieces_of_the_sheet_are_dropped_and_saved_separately(tmp_path):
     post_process_fissure_masks(nothing_big_enough, FakeSegmenter())
 
     assert not load(nothing_big_enough.sheet_path).any()
-    assert (load(nothing_big_enough.removed_pieces_path) == whole_sheet).all()
+    assert (removed_by(nothing_big_enough, "small_pieces") == whole_sheet).all()
 
 
 def test_a_line_inside_the_lungs_is_kept_however_far_it_is_from_the_lobe_boundary(
@@ -212,7 +222,7 @@ def test_a_line_inside_the_lungs_is_kept_however_far_it_is_from_the_lobe_boundar
 
     post_process_fissure_masks(job, FakeSegmenter())
 
-    removed = load(job.removed_lines_path)
+    removed = removed_by(job, "lines_outside_lungs")
     assert removed[FAR_X, 20, 5:35].all() and not removed[INSIDE_FAR_X].any()
 
 
@@ -231,7 +241,16 @@ def test_the_island_rules_trim_the_sheet_and_write_a_report(tmp_path):
     )
     post_process_fissure_masks(drop_all_but_largest, FakeSegmenter())
 
-    kept, removed = load(drop_all_but_largest.sheet_path), load(drop_all_but_largest.removed_islands_path)
+    kept = load(drop_all_but_largest.sheet_path)
+    removed = removed_by(drop_all_but_largest, "drop_small_islands")
     assert ((kept | removed) == whole_sheet).all() and not (kept & removed).any()
-    report = IslandReport.model_validate_json(drop_all_but_largest.island_report_path.read_text())
-    assert report.island_voxels_after == [int(kept.sum())]
+    assert read_report(drop_all_but_largest).islands.island_voxels_after == [int(kept.sum())]
+
+
+def test_the_report_names_a_label_for_every_step_in_the_order_they_ran(tmp_path):
+    save(lobes_meeting_at_the_boundary(), tmp_path / "lobes.nii.gz")
+    save(ragged_plane_at_the_boundary(range(5, 35)).astype(np.uint8), tmp_path / "fissures_axial.nii.gz")
+    job = job_for(tmp_path, ["axial"]).model_copy(update={"island_rules": [DropSmallIslands()]})
+    post_process_fissure_masks(job, FakeSegmenter())
+    legend = [(removal.label, removal.step) for removal in read_report(job).removed]
+    assert legend == [(1, "lines_outside_lungs"), (2, "small_pieces"), (3, "drop_small_islands")]

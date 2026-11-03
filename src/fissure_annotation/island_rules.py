@@ -16,6 +16,7 @@ How:
   - A flagging rule returns the islands unchanged, plus flags.
 - The rules run in the order of the config, each on what the previous one kept.
 - Flags never change the sheet. They name a scan a person should look at, and why.
+- What each rule removed is kept apart, so the report can say which rule removed which voxels.
 - A new rule is a new class added to `IslandRule`, and to the config. No other code changes.
 """
 
@@ -64,7 +65,7 @@ def default_island_rules() -> list[IslandRule]:
 
 
 class IslandReport(BaseModel):
-    "what the rules did to one sheet, saved next to it as JSON"
+    "what the rules did to one sheet, saved as part of the post-process report"
 
     island_voxels_before: list[int]
     island_voxels_after: list[int]
@@ -75,10 +76,16 @@ class IslandReport(BaseModel):
         return bool(self.flags)
 
 
-class TrimmedSheet:
-    def __init__(self, kept: Bool[np.ndarray, "x y z"], removed: Bool[np.ndarray, "x y z"], report: IslandReport):
-        self.kept = kept
+class RuleRemoval:
+    def __init__(self, rule: str, removed: Bool[np.ndarray, "x y z"]):
+        self.rule = rule
         self.removed = removed
+
+
+class TrimmedSheet:
+    def __init__(self, kept: Bool[np.ndarray, "x y z"], removals: list[RuleRemoval], report: IslandReport):
+        self.kept = kept
+        self.removals = removals  # one per rule, in the order they ran
         self.report = report
 
 
@@ -88,9 +95,10 @@ def apply_island_rules(
     affine: Float[np.ndarray, "4 4"],
 ) -> TrimmedSheet:
     before = Islands(sheet, affine)
-    islands, flags = before, []
+    islands, flags, removals = before, [], []
     for rule in rules:
         outcome = rule.apply(islands)
+        removals.append(RuleRemoval(rule.kind, islands.mask & ~outcome.kept.mask))
         islands = outcome.kept
         flags += outcome.flags
     report = IslandReport(
@@ -98,4 +106,4 @@ def apply_island_rules(
         island_voxels_after=islands.sizes.tolist(),
         flags=flags,
     )
-    return TrimmedSheet(islands.mask, sheet & ~islands.mask, report)
+    return TrimmedSheet(islands.mask, removals, report)
