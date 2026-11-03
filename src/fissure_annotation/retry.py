@@ -1,44 +1,80 @@
-"""Retry a model request through transient failures of the provider.
+"""What a model request does when the provider fails it. Three policies, each one tenacity policy.
+
+| Policy | Matches | Does | Gives up |
+|---|---|---|---|
+| `wait_for_flex_capacity` | 429 `flex_unavailable` | waits `capacity_wait_seconds`, again and again | never |
+| `wait_for_credit` | an empty balance or a spend limit | waits `credit_wait_seconds`, doubling up to `credit_max_wait_seconds` | never |
+| `retry_transient_errors` | 408, any other 429, 5xx, a lost connection | waits `retry_wait_seconds`, doubling with jitter up to 60 s | after `retries` retries, then raises |
 
 Why:
 - A slice is one conversation, and an error in any slice stops the run of its whole scan.
   - One 503 from the provider (a connection timeout upstream of Portkey) failed a scan of 289 slices.
-- The flex tier of OpenAI answers 429 `flex_unavailable` when it has no capacity, sometimes for minutes.
-  - Six retries over two minutes were not enough, and a scan failed after eight minutes of work.
+- Flex has no capacity for minutes at a time. That is not an error of the request, so it is waited out.
+- A spend limit is lifted when the organization raises it, so it is waited out too, with longer and longer waits.
+  - Runs stopped at the OpenAI organization's spend limit on 2026-10-30 and on 2026-11-03.
 
 How:
-- A lack of flex capacity is retried at a constant interval, `capacity_wait_seconds`, for as long as it lasts.
-  - It is not an error of the request, so giving up would only throw away the work of the scan.
-- Any other transient error is retried up to `retries` times, waiting `base * 2 ** attempt` seconds, capped and with jitter.
-  - An error is transient when its HTTP status is 408, 429 or 5xx, or when the connection failed or timed out.
-  - Errors are recognised by their status code, error code or class name, so the OpenAI classes vendored by Portkey need no import.
-  - Jitter keeps the parallel slices of a run from retrying in lockstep.
-- A 429 for an empty balance or a used-up quota is raised at once, since waiting does not bring credits back.
-- Any other error, or the last transient one, is raised.
-- Each retry is reported through `on_retry`, so a run shows why it is waiting.
+- The policies wrap each other: transient errors outside, then credit, then flex capacity inside.
+  - Each policy retries only the errors it matches and lets every other error through.
+  - So waiting for capacity or credit never uses up a retry of a transient error.
+- Errors are recognised by their status code, error code, type or class name.
+  - So the OpenAI classes vendored by Portkey need no import.
+- Any other error is raised at once. The scan list decides what to do with the scan (scan_list.py).
+- Every wait is reported through `on_wait` with the policy's name, so a run shows why it is waiting.
+  - That is also where notifications can hook in later.
 - Retrying a request is safe: nothing is saved before a response arrives, and `previous_response_id` points at a response that exists.
 """
 
-import random
 import time
 from collections.abc import Callable
+
+from pydantic import BaseModel, Field
+from tenacity import (
+    RetryCallState,
+    Retrying,
+    retry_if_exception,
+    stop_after_attempt,
+    stop_never,
+    wait_exponential,
+    wait_fixed,
+    wait_random_exponential,
+)
 
 RETRIED_STATUS_CODES = frozenset({408, 429})
 RETRIED_ERROR_NAMES = frozenset({"APIConnectionError", "APITimeoutError"})
 NO_CAPACITY_CODE = "flex_unavailable"
-OUT_OF_CREDIT_CODES = frozenset({"insufficient_quota", "credit_balance_exhausted"})
-MAX_WAIT_SECONDS = 60.0
+OUT_OF_CREDIT_CODES = frozenset({"insufficient_quota", "credit_balance_exhausted", "organization_spend_limit_exceeded"})
+MAX_TRANSIENT_WAIT_SECONDS = 60.0
 
-OnRetry = Callable[[Exception, str, float], None]  # the error, which retry this is, and the wait in seconds
+WAIT_FOR_FLEX_CAPACITY = "wait_for_flex_capacity"
+WAIT_FOR_CREDIT = "wait_for_credit"
+RETRY_TRANSIENT_ERRORS = "retry_transient_errors"
+
+OnWait = Callable[[str, BaseException, int, float], None]  # the policy, the error, the attempt, the wait in seconds
 
 
-def is_out_of_credit(error: Exception) -> bool:
-    "OpenAI puts insufficient_quota in the type and the reason in the code, so both are checked"
-    return bool({getattr(error, "code", None), getattr(error, "type", None)} & OUT_OF_CREDIT_CODES)
+class RetrySettings(BaseModel):
+    capacity_wait_seconds: float = Field(default=60.0, ge=0)
+    credit_wait_seconds: float = Field(default=300.0, ge=0)  # the first wait for credit, which doubles each time
+    credit_max_wait_seconds: float = Field(default=3600.0, ge=0)
+    retries: int = Field(default=6, ge=0)  # retries of a transient error, after the first attempt
+    retry_wait_seconds: float = Field(default=2.0, ge=0)  # the first wait for a transient error, which doubles each time
 
 
-def is_transient(error: Exception) -> bool:
-    if is_out_of_credit(error):
+def is_out_of_capacity(error: BaseException) -> bool:
+    "the code is on the OpenAI error, and in its message when a proxy wraps it"
+    return getattr(error, "code", None) == NO_CAPACITY_CODE or NO_CAPACITY_CODE in str(error)
+
+
+def is_out_of_credit(error: BaseException) -> bool:
+    "OpenAI puts insufficient_quota in the type and the reason in the code, so both are checked, and the message for a proxy"
+    codes = {getattr(error, "code", None), getattr(error, "type", None)}
+    return bool(codes & OUT_OF_CREDIT_CODES) or any(code in str(error) for code in OUT_OF_CREDIT_CODES)
+
+
+def is_transient(error: BaseException) -> bool:
+    "a lack of capacity or credit is also a 429, but its own policy handles it"
+    if is_out_of_capacity(error) or is_out_of_credit(error):
         return False
     status = getattr(error, "status_code", None)
     if isinstance(status, int):
@@ -46,42 +82,60 @@ def is_transient(error: Exception) -> bool:
     return type(error).__name__ in RETRIED_ERROR_NAMES
 
 
-def is_out_of_capacity(error: Exception) -> bool:
-    "the code is on the OpenAI error, and in its message when a proxy wraps it"
-    return getattr(error, "code", None) == NO_CAPACITY_CODE or NO_CAPACITY_CODE in str(error)
-
-
-def describe(error: Exception) -> str:
+def describe(error: BaseException) -> str:
     parts = [type(error).__name__, getattr(error, "status_code", None), getattr(error, "code", None)]
     return " ".join(str(part) for part in parts if part)
 
 
-def wait_seconds(attempt: int, base_seconds: float) -> float:
-    return min(base_seconds * 2**attempt, MAX_WAIT_SECONDS) * random.uniform(0.5, 1.0)
+def reporter(policy: str, on_wait: OnWait | None) -> Callable[[RetryCallState], None]:
+    def report(state: RetryCallState) -> None:
+        if on_wait is not None:
+            on_wait(policy, state.outcome.exception(), state.attempt_number, state.next_action.sleep)
+
+    return report
+
+
+def wait_for_flex_capacity(settings: RetrySettings, on_wait: OnWait | None, sleep: Callable[[float], None]) -> Retrying:
+    return Retrying(
+        retry=retry_if_exception(is_out_of_capacity),
+        wait=wait_fixed(settings.capacity_wait_seconds),
+        stop=stop_never,
+        before_sleep=reporter(WAIT_FOR_FLEX_CAPACITY, on_wait),
+        sleep=sleep,
+        reraise=True,
+    )
+
+
+def wait_for_credit(settings: RetrySettings, on_wait: OnWait | None, sleep: Callable[[float], None]) -> Retrying:
+    return Retrying(
+        retry=retry_if_exception(is_out_of_credit),
+        wait=wait_exponential(multiplier=settings.credit_wait_seconds, max=settings.credit_max_wait_seconds),
+        stop=stop_never,
+        before_sleep=reporter(WAIT_FOR_CREDIT, on_wait),
+        sleep=sleep,
+        reraise=True,
+    )
+
+
+def retry_transient_errors(settings: RetrySettings, on_wait: OnWait | None, sleep: Callable[[float], None]) -> Retrying:
+    "jitter keeps the parallel stacks of a run from retrying in lockstep"
+    return Retrying(
+        retry=retry_if_exception(is_transient),
+        wait=wait_random_exponential(multiplier=settings.retry_wait_seconds, max=MAX_TRANSIENT_WAIT_SECONDS),
+        stop=stop_after_attempt(settings.retries + 1),
+        before_sleep=reporter(RETRY_TRANSIENT_ERRORS, on_wait),
+        sleep=sleep,
+        reraise=True,
+    )
 
 
 def with_retries[T](
     request: Callable[[], T],
-    retries: int,
-    base_seconds: float,
-    capacity_wait_seconds: float,
+    settings: RetrySettings,
+    on_wait: OnWait | None = None,
     sleep: Callable[[float], None] = time.sleep,
-    on_retry: OnRetry | None = None,
 ) -> T:
-    attempt = 0  # counts the transient errors only, a lack of capacity never uses up a retry
-    waited_for_capacity = 0
-    while True:
-        try:
-            return request()
-        except Exception as error:
-            if is_out_of_capacity(error):
-                waited_for_capacity += 1
-                wait, which = capacity_wait_seconds, f"no flex capacity, wait {waited_for_capacity}"
-            elif is_transient(error) and attempt < retries:
-                attempt += 1
-                wait, which = wait_seconds(attempt - 1, base_seconds), f"retry {attempt}/{retries}"
-            else:
-                raise
-            if on_retry is not None:
-                on_retry(error, which, wait)
-            sleep(wait)
+    capacity = wait_for_flex_capacity(settings, on_wait, sleep)
+    credit = wait_for_credit(settings, on_wait, sleep)
+    transient = retry_transient_errors(settings, on_wait, sleep)
+    return transient(lambda: credit(lambda: capacity(request)))

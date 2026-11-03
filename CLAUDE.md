@@ -39,3 +39,11 @@ These apply to code, docs, READMEs, PRs and commits.
   - `imaging/` is the bottom layer: it handles pixels and nothing else, and imports nothing from the rest of the package.
   - A test in `tests/test_layering.py` enforces it.
 - Tests live in `tests/`. A behaviour-preserving refactor needs a test that pins the behaviour first.
+
+# Removed code to bring back if needed
+
+- The lobe guide generation was removed from main. The tag `experiments/2026-10` keeps it.
+  - `src/fissure_annotation/fissure_hints.py` draws a band around each fissure from the lobes.
+  - `src/fissure_annotation/imaging/guides.py` draws the dashed band edges on a slice.
+  - The band helpers are in `src/fissure_annotation/imaging/lobes.py`, and `OverviewGuides` is in `src/fissure_annotation/stack_agent.py`.
+  - Get a file with `git show experiments/2026-10:<path>`.

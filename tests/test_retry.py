@@ -1,6 +1,15 @@
 import pytest
 
-from fissure_annotation.retry import is_out_of_capacity, is_transient, wait_seconds, with_retries
+from fissure_annotation.retry import (
+    RETRY_TRANSIENT_ERRORS,
+    WAIT_FOR_CREDIT,
+    WAIT_FOR_FLEX_CAPACITY,
+    RetrySettings,
+    is_out_of_capacity,
+    is_out_of_credit,
+    is_transient,
+    with_retries,
+)
 
 
 class StatusError(Exception):
@@ -40,30 +49,36 @@ def test_a_lost_connection_is_transient_and_a_plain_error_is_not():
     assert not is_transient(ValueError())
 
 
+def settings(**values) -> RetrySettings:
+    return RetrySettings(**{"capacity_wait_seconds": 60.0, "credit_wait_seconds": 300.0, "retry_wait_seconds": 1.0, **values})
+
+
 def test_a_transient_error_is_retried_until_the_request_succeeds():
     request, calls = failing([StatusError(503), StatusError(429)])
     waits = []
-    assert with_retries(request, retries=3, base_seconds=1.0, capacity_wait_seconds=60.0, sleep=waits.append) == "ok"
+    assert with_retries(request, settings(retries=3), sleep=waits.append) == "ok"
     assert len(calls) == 3 and len(waits) == 2
 
 
 def test_a_client_error_is_raised_at_once():
     request, calls = failing([StatusError(400)])
     with pytest.raises(StatusError):
-        with_retries(request, retries=3, base_seconds=1.0, capacity_wait_seconds=60.0, sleep=lambda s: None)
+        with_retries(request, settings(retries=3), sleep=lambda s: None)
     assert len(calls) == 1
 
 
 def test_the_last_transient_error_is_raised_when_the_retries_run_out():
     request, calls = failing([StatusError(503)] * 5)
     with pytest.raises(StatusError):
-        with_retries(request, retries=2, base_seconds=1.0, capacity_wait_seconds=60.0, sleep=lambda s: None)
+        with_retries(request, settings(retries=2), sleep=lambda s: None)
     assert len(calls) == 3
 
 
-def test_the_wait_doubles_and_is_capped():
-    assert 1.0 <= wait_seconds(1, 2.0) <= 4.0
-    assert wait_seconds(20, 2.0) <= 60.0
+def test_the_transient_wait_is_capped():
+    request, _ = failing([StatusError(503)] * 20)
+    waits = []
+    with_retries(request, settings(retries=20, retry_wait_seconds=2.0), sleep=waits.append)
+    assert max(waits) <= 60.0
 
 
 class FlexUnavailable(Exception):
@@ -77,39 +92,47 @@ def test_a_lack_of_flex_capacity_is_recognised_by_its_code_or_its_message():
     assert is_out_of_capacity(FlexUnavailable())
     assert is_out_of_capacity(Exception("{'code': 'flex_unavailable'}"))
     assert not is_out_of_capacity(StatusError(429))
+    assert not is_transient(FlexUnavailable())
 
 
-def test_a_lack_of_capacity_is_retried_at_a_constant_rate_beyond_the_retries():
+def test_a_lack_of_capacity_is_waited_out_at_a_constant_rate_beyond_the_retries():
     request, calls = failing([FlexUnavailable()] * 10)
     waits = []
-    assert with_retries(request, retries=2, base_seconds=1.0, capacity_wait_seconds=60.0, sleep=waits.append) == "ok"
+    assert with_retries(request, settings(retries=2), sleep=waits.append) == "ok"
     assert len(calls) == 11 and waits == [60.0] * 10
 
 
 def test_waiting_for_capacity_does_not_use_up_the_retries_of_other_errors():
-    request, calls = failing([FlexUnavailable(), FlexUnavailable(), StatusError(503), StatusError(503)])
-    assert with_retries(request, retries=2, base_seconds=0.0, capacity_wait_seconds=0.0, sleep=lambda s: None) == "ok"
-
-
-def test_each_retry_is_reported_with_its_wait():
-    request, _ = failing([FlexUnavailable(), StatusError(503)])
-    reports = []
-    with_retries(request, retries=2, base_seconds=1.0, capacity_wait_seconds=60.0, sleep=lambda s: None,
-                 on_retry=lambda error, which, wait: reports.append((which, wait)))
-    assert reports[0] == ("no flex capacity, wait 1", 60.0)
-    assert reports[1][0] == "retry 1/2"
+    request, _ = failing([FlexUnavailable(), FlexUnavailable(), StatusError(503), StatusError(503)])
+    assert with_retries(request, settings(retries=2, retry_wait_seconds=0.0), sleep=lambda s: None) == "ok"
 
 
 class OutOfCredit(StatusError):
-    "what OpenAI answers when the balance is empty"
+    "what OpenAI answers when the organization reaches its spend limit"
 
     def __init__(self):
         super().__init__(429)
-        self.code, self.type = "credit_balance_exhausted", "insufficient_quota"
+        self.code, self.type = "organization_spend_limit_exceeded", "insufficient_quota"
 
 
-def test_an_empty_balance_is_raised_at_once():
-    request, calls = failing([OutOfCredit()])
-    with pytest.raises(OutOfCredit):
-        with_retries(request, retries=3, base_seconds=1.0, capacity_wait_seconds=60.0, sleep=lambda s: None)
-    assert len(calls) == 1
+def test_an_empty_balance_or_a_spend_limit_is_recognised_and_is_not_transient():
+    assert is_out_of_credit(OutOfCredit())
+    assert is_out_of_credit(Exception("{'code': 'credit_balance_exhausted'}"))
+    assert not is_transient(OutOfCredit())
+
+
+def test_a_lack_of_credit_is_waited_out_with_doubling_waits_up_to_the_cap():
+    request, calls = failing([OutOfCredit()] * 6)
+    waits = []
+    assert with_retries(request, settings(credit_wait_seconds=300.0, credit_max_wait_seconds=1200.0), sleep=waits.append) == "ok"
+    assert waits == [300.0, 600.0, 1200.0, 1200.0, 1200.0, 1200.0]
+
+
+def test_every_wait_is_reported_with_its_policy_attempt_and_wait():
+    request, _ = failing([FlexUnavailable(), OutOfCredit(), StatusError(503)])
+    reports = []
+    with_retries(request, settings(retries=2), sleep=lambda s: None,
+                 on_wait=lambda policy, error, attempt, wait: reports.append((policy, attempt, wait)))
+    assert reports[0] == (WAIT_FOR_FLEX_CAPACITY, 1, 60.0)
+    assert reports[1] == (WAIT_FOR_CREDIT, 1, 300.0)
+    assert reports[2][:2] == (RETRY_TRANSIENT_ERRORS, 1)

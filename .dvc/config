@@ -1,0 +1,5 @@
+[core]
+    remote = fissure
+['remote "fissure"']
+    url = s3://qmuse-data/hariom-narang/fissure-annotation/dvc
+    region = us-west-2

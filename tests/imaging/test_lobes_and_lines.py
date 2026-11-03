@@ -1,56 +1,9 @@
 import numpy as np
 
 from fissure_annotation.imaging.lines import keep_lines_mostly_inside, keep_lines_near
-from fissure_annotation.imaging.lobes import (
-    LEFT_LOWER,
-    LEFT_UPPER,
-    RIGHT_UPPER,
-    distance_to_mask_mm,
-    lobe_boundary_band,
-)
+from fissure_annotation.imaging.lobes import distance_to_mask_mm
 
 ISOTROPIC = (1.0, 1.0, 1.0)
-
-
-def two_lobes_side_by_side(upper=LEFT_UPPER, lower=LEFT_LOWER, gap=0):
-    "lobe `upper` for x < 10, then `gap` unlabelled layers, then lobe `lower`"
-    lobes = np.zeros((20, 4, 4), dtype=np.uint8)
-    lobes[:10] = upper
-    lobes[10 + gap :] = lower
-    return lobes
-
-
-def band_x_positions(band):
-    return sorted(set(np.nonzero(band)[0].tolist()))
-
-
-def test_the_band_has_the_voxels_of_both_lobes_within_the_band_of_the_other():
-    band = lobe_boundary_band(two_lobes_side_by_side(), ISOTROPIC, band_mm=2.0)
-    assert band_x_positions(band) == [8, 9, 10, 11]
-
-
-def test_the_band_is_measured_in_millimetres_not_voxels():
-    band = lobe_boundary_band(two_lobes_side_by_side(), (2.0, 1.0, 1.0), band_mm=2.0)
-    assert band_x_positions(band) == [9, 10]
-
-
-def test_a_gap_no_wider_than_the_band_is_crossed_but_never_labelled():
-    band = lobe_boundary_band(two_lobes_side_by_side(gap=1), ISOTROPIC, band_mm=2.0)
-    assert band_x_positions(band) == [9, 11]  # x=10 is the gap
-
-
-def test_lobes_that_do_not_share_a_fissure_give_no_band():
-    band = lobe_boundary_band(
-        two_lobes_side_by_side(upper=LEFT_UPPER, lower=RIGHT_UPPER),
-        ISOTROPIC,
-        band_mm=2.0,
-    )
-    assert not band.any()
-
-
-def test_a_lobe_missing_from_the_segmentation_gives_no_band_for_its_pairs():
-    lobes = np.full((20, 4, 4), LEFT_UPPER, dtype=np.uint8)  # no lower left lobe
-    assert not lobe_boundary_band(lobes, ISOTROPIC, band_mm=2.0).any()
 
 
 def test_distance_to_mask_uses_the_spacing():
@@ -123,17 +76,3 @@ def test_a_line_with_a_short_tail_outside_the_region_is_kept_whole():
     mask[2:50, 2, 2] = True  # 38 of 48 voxels inside, the tail goes beyond the region
     kept, removed = keep_lines_mostly_inside(mask, region, min_share=0.5)
     assert (kept == mask).all() and not removed.any()
-
-
-def test_fissure_band_labels_name_each_fissure_and_keep_the_band_width():
-    from fissure_annotation.imaging.lobes import RIGHT_HORIZONTAL, RIGHT_OBLIQUE, fissure_band_labels
-
-    lobes = np.zeros((10, 10, 30), dtype=np.uint8)
-    lobes[:, :, 0:10] = 14  # right lower
-    lobes[:, :, 10:20] = 13  # right middle
-    lobes[:, :, 20:30] = 12  # right upper
-    labels = fissure_band_labels(lobes, (1.0, 1.0, 1.0), band_mm=2.0)
-    column = labels[5, 5, :]
-    assert set(np.nonzero(column == RIGHT_OBLIQUE)[0]) == {8, 9, 10, 11}
-    assert set(np.nonzero(column == RIGHT_HORIZONTAL)[0]) == {18, 19, 20, 21}
-    assert column[0] == 0 and column[15] == 0

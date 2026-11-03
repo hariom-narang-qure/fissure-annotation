@@ -13,7 +13,7 @@ How:
 3. The lobes are segmented with TotalSegmentator into `totalseg_lobes.nii.gz`, unless that file exists.
    - Post-processing trims lines outside the lungs with it. The agent does not use it.
 4. For each scan, the agent is run on every `slice_step`-th slice of each view (`make_fissure_mask`).
-   - The `annotator` of the config annotates one slice at a time, or stacks of neighbours (annotators.py).
+   - The `annotator` annotates them in stacks of neighbours (annotators.py).
 5. Then the masks are cleaned and blended into one sheet (`post_process_fissure_masks`).
    - It uses `lobes.nii.gz` when the folder has one, for example manual lobes put there before the run.
    - Otherwise it uses the TotalSegmentator lobes.
@@ -22,7 +22,13 @@ How:
    - So all runs of a scan sit together, for example `work/scans/<uid>/flex_step4/`.
    - A scan with a sheet in its folder is done, and is skipped on the next run.
    - A run that stopped halfway is finished by running it again, since the agent skips slices that have a log.
-   - A scan that raised an error, or was skipped, is recorded in its `status.json` and the list goes on.
+   - A scan that was skipped is recorded in its `status.json` and the list goes on.
+7. A scan that raises is run again, up to `scan_attempts` times in all, `scan_retry_wait_seconds` apart (`retry_scan`).
+   - This is the policy for every error the request policies of retry.py let through: a bug, a bad scan, or a transient error that outlasted its retries.
+   - A run again resumes, since the agent skips stacks that have a log.
+   - After the last attempt the scan is recorded as failed in its `status.json`, with the traceback, and the list goes on.
+   - A skipped scan is not retried, and neither is a Ctrl-C.
+   - Each retry prints one line naming the policy, so a run shows it, and notifications can hook in there later.
 
 The agent costs about the same per slice, so `estimated_cost_usd` is the number of slices times a price per slice.
 - The price is for gpt-6.1-terra with the stack agent: $0.005 to $0.006 per slice on the 40 eval slices (docs/stack_agent_experiments.md).
@@ -38,9 +44,10 @@ from typing import Literal
 
 import nibabel as nib
 from pydantic import BaseModel, Field
+from tenacity import RetryCallState, Retrying, retry_if_exception, stop_after_attempt, wait_fixed
 
 from fissure_annotation.agent import AgentSettings
-from fissure_annotation.annotators import Annotator, OneSliceAnnotator
+from fissure_annotation.annotators import StackAnnotator
 from fissure_annotation.fissure_mask import FissureMaskJob, make_fissure_mask
 from fissure_annotation.imaging.resample import (
     resample_z_to_pixel_spacing,
@@ -73,9 +80,11 @@ class ScanListJob(ExperimentSettings):
     max_slice_mm: float = 3.0  # thicker slices are skipped
     max_slice_to_pixel_ratio: float = 1.5  # above it the scan is resampled along z to its pixel spacing
     limit: int | None = None  # only the first scans of the list, to try the run on a few
+    scan_attempts: int = Field(default=3, ge=1)  # a scan that raises is run this many times in all, see retry_scan
+    scan_retry_wait_seconds: float = Field(default=60.0, ge=0)
     dry_run: bool = False  # the script prints the plan and calls nothing
     agent: AgentSettings = AgentSettings()
-    annotator: Annotator = Field(default_factory=OneSliceAnnotator, discriminator="kind")
+    annotator: StackAnnotator = StackAnnotator()
     sheet: SheetSettings = SheetSettings()
     totalsegmentator: TotalSegmentatorSettings = TotalSegmentatorSettings()
 
@@ -130,6 +139,7 @@ class ScanFolder(BaseModel):
 class ScanStatus(BaseModel):
     state: Literal["done", "failed", "skipped"]
     seconds: float
+    attempts: int = 1
     error: str | None = None
 
 
@@ -249,21 +259,49 @@ def record_status(folder: ScanFolder, status: ScanStatus) -> None:
     folder.status_path.write_text(status.model_dump_json(indent=2))
 
 
-def run_one(job: ScanListJob, uid: str, client) -> ScanStatus:
-    "an error is recorded and returned, so the next scan still runs"
+RETRY_SCAN = "retry_scan"
+
+
+def is_worth_retrying(error: BaseException) -> bool:
+    "a skipped scan would be skipped again, and a Ctrl-C or a SystemExit is not an Exception"
+    return isinstance(error, Exception) and not isinstance(error, ScanSkipped)
+
+
+def report_scan_retry(uid: str):
+    def report(state: RetryCallState) -> None:
+        error = state.outcome.exception()
+        last_line = "".join(traceback.format_exception_only(error)).strip()
+        print(f"{uid}: {RETRY_SCAN}, attempt {state.attempt_number}, next in {state.next_action.sleep:.0f}s, {last_line}", flush=True)
+
+    return report
+
+
+def retry_scan(job: ScanListJob, uid: str, sleep=time.sleep) -> Retrying:
+    return Retrying(
+        retry=retry_if_exception(is_worth_retrying),
+        stop=stop_after_attempt(job.scan_attempts),
+        wait=wait_fixed(job.scan_retry_wait_seconds),
+        before_sleep=report_scan_retry(uid),
+        sleep=sleep,
+        reraise=True,
+    )
+
+
+def run_one(job: ScanListJob, uid: str, client, sleep=time.sleep) -> ScanStatus:
+    "an error is recorded and returned after the last attempt, so the next scan still runs"
     folder = ScanFolder(root=job.out_root, uid=uid, run=job.run_name)
     started = time.monotonic()
+    retrying = retry_scan(job, uid, sleep)
     try:
-        process_scan(job, uid, folder, client)
-        status = ScanStatus(state="done", seconds=time.monotonic() - started)
+        retrying(process_scan, job, uid, folder, client)
+        status = ScanStatus(state="done", seconds=time.monotonic() - started, attempts=retrying.statistics["attempt_number"])
     except ScanSkipped as reason:
-        status = ScanStatus(
-            state="skipped", seconds=time.monotonic() - started, error=str(reason)
-        )
+        status = ScanStatus(state="skipped", seconds=time.monotonic() - started, error=str(reason))
     except Exception:
         status = ScanStatus(
             state="failed",
             seconds=time.monotonic() - started,
+            attempts=retrying.statistics["attempt_number"],
             error=traceback.format_exc(),
         )
     record_status(folder, status)

@@ -17,7 +17,8 @@ Every experiment on the fissure stack agent, run 2026-10-29 on LOCCA scans with 
 - Most runs have 2 repeats. Two numbers in a cell are the two repeats.
 - Costs are list prices from the logged tokens, unless marked as a Portkey estimate.
 - Where each experiment lives is in "Where to find each run" at the end.
-- The ground truth here is the manual lobe border. A later eval scores against fissure traces instead, so its numbers are on another scale.
+- The ground truth here is the manual lobe border.
+  - The slice eval on main (`scripts/run_slice_eval.py`) scores against fissure traces instead, so its numbers are on another scale.
 
 ## Baseline
 
@@ -179,6 +180,7 @@ Only the final setup is on main. Every experiment can be run again from a git ta
   - Section 5: `configs/stack_agent_eval40_step3_ridge_no_guides_terra_end_check.yaml`, and `configs/terra_exp*.yaml` with `prompts/terra_exp*.txt`.
   - Section 7: `configs/molmo_*.yaml`, and the scripts in `experiments/molmo/`.
   - The code that runs them is the code of that tag: `scripts/run_stack_experiment.py`.
+  - The one-slice pipeline runs with gpt-6.1-sol (`flex_step4`): `configs/scan_list.yaml`, `configs/severe_scans_flex.yaml`, `configs/locca_flex_step4.yaml` and `configs/review_v1_scans.yaml`.
 - `experiments/vessel-dots-2026-10`: section 6, with its own code for the vessel dots.
 - The outputs are not in git.
   - They are in `work/stack_agent/<out_dir>` on the machine that ran them, where `out_dir` is the one in each config.

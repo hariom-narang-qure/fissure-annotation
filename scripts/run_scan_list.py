@@ -2,11 +2,11 @@
 """The fissure pipeline over a list of scans. Settings come from a YAML in configs/, flags go on top.
 Look at the plan first, it calls nothing and prints the slices and the estimated cost:
 
-    uv run python scripts/run_scan_list.py --config configs/scan_list.yaml --dry-run true
+    uv run python scripts/run_scan_list.py --config configs/pipeline_terra_ridge_step3.yaml --dry-run true
 
 Then try a few scans before the whole list:
 
-    uv run --env-file .env python scripts/run_scan_list.py --config configs/scan_list.yaml --limit 2
+    uv run --env-file .env python scripts/run_scan_list.py --config configs/pipeline_terra_ridge_step3.yaml --limit 2
 
 Needs in the environment, for the model calls (not for the plan):
 - PORTKEY_API_KEY, or OPENAI_API_KEY with agent.provider set to openai, which `--env-file .env` provides.
