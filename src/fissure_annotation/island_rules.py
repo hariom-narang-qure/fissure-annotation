@@ -80,11 +80,27 @@ class FlagExtraIslands(Rule):
         return RuleOutcome(islands, [flag])
 
 
+class FlagTooFewIslands(Rule):
+    "fewer islands than the two main sheets are left, so a lung likely has no fissure"
+
+    kind: Literal["flag_too_few_islands"] = "flag_too_few_islands"
+    min_islands: int = Field(default=2, ge=1)
+
+    def apply(self, islands: Islands) -> RuleOutcome:
+        if islands.count >= self.min_islands:
+            return RuleOutcome(islands)
+        flag = ReviewFlag(
+            rule=self.kind,
+            reason=f"islands left: {islands.count}, fewer than {self.min_islands}",
+        )
+        return RuleOutcome(islands, [flag])
+
+
 class FlagCloseMainIslands(Rule):
     """the two largest islands should be the two lungs, so their centroids are far apart
 
     Two close main islands are likely one lung's fissure in two pieces, with the other lung's fissure missing.
-    A sheet with fewer than two islands is flagged too, since a lung has no fissure.
+    With fewer than two islands there is nothing to measure, and `FlagTooFewIslands` flags it.
     """
 
     kind: Literal["flag_close_main_islands"] = "flag_close_main_islands"
@@ -92,8 +108,8 @@ class FlagCloseMainIslands(Rule):
 
     def apply(self, islands: Islands) -> RuleOutcome:
         if islands.count < 2:
-            return RuleOutcome(islands, [self.flag(f"only {islands.count} island, so a lung has no fissure")])
-        distance = islands.centroid_distance_mm(1, 2)
+            return RuleOutcome(islands)
+        distance = islands.two_largest_centroid_distance_mm()
         if distance >= self.min_centroid_distance_mm:
             return RuleOutcome(islands)
         return RuleOutcome(
@@ -106,13 +122,13 @@ class FlagCloseMainIslands(Rule):
 
 
 IslandRule = Annotated[
-    DropSmallIslands | FlagExtraIslands | FlagCloseMainIslands,
+    DropSmallIslands | FlagExtraIslands | FlagTooFewIslands | FlagCloseMainIslands,
     Field(discriminator="kind"),
 ]
 
 
 def default_island_rules() -> list[IslandRule]:
-    return [DropSmallIslands(), FlagExtraIslands(), FlagCloseMainIslands()]
+    return [DropSmallIslands(), FlagExtraIslands(), FlagTooFewIslands(), FlagCloseMainIslands()]
 
 
 class IslandReport(BaseModel):

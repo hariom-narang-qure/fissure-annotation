@@ -62,3 +62,7 @@ class Islands:
 
     def centroid_distance_mm(self, first: int, second: int) -> float:
         return float(np.linalg.norm(self.centroid_mm(first) - self.centroid_mm(second)))
+
+    def two_largest_centroid_distance_mm(self) -> float:
+        largest, second_largest = 0, 1
+        return self.centroid_distance_mm(largest, second_largest)

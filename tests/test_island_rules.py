@@ -5,6 +5,7 @@ from fissure_annotation.island_rules import (
     DropSmallIslands,
     FlagCloseMainIslands,
     FlagExtraIslands,
+    FlagTooFewIslands,
     IslandRule,
     apply_island_rules,
     default_island_rules,
@@ -81,7 +82,7 @@ def test_a_config_can_list_the_rules_by_kind():
         {"rules": [{"kind": "drop_small_islands", "min_share_of_largest": 0.1}, {"kind": "flag_extra_islands"}]}
     ).rules
     assert rules == [DropSmallIslands(min_share_of_largest=0.1), FlagExtraIslands()]
-    assert default_island_rules() == [DropSmallIslands(), FlagExtraIslands(), FlagCloseMainIslands()]
+    assert default_island_rules() == [DropSmallIslands(), FlagExtraIslands(), FlagTooFewIslands(), FlagCloseMainIslands()]
 
 
 def two_islands_mm_apart(distance_mm):
@@ -101,7 +102,29 @@ def test_main_islands_far_apart_are_not_flagged():
     assert FlagCloseMainIslands(min_centroid_distance_mm=80).apply(two_islands_mm_apart(150)).flags == []
 
 
-def test_a_single_island_is_flagged():
+def single_island():
     mask = np.zeros((SIZE, SIZE, SIZE), dtype=bool)
     mask[0, 0, 0] = True
-    assert FlagCloseMainIslands().apply(Islands(mask, np.eye(4))).flags != []
+    return Islands(mask, np.eye(4))
+
+
+def test_a_single_island_is_flagged_as_too_few():
+    outcome = FlagTooFewIslands().apply(single_island())
+    assert [flag.rule for flag in outcome.flags] == ["flag_too_few_islands"]
+    assert "islands left: 1," in outcome.flags[0].reason
+
+
+def test_two_islands_are_not_too_few():
+    assert FlagTooFewIslands().apply(two_islands_mm_apart(150)).flags == []
+
+
+def test_a_single_island_has_no_distance_to_flag():
+    assert FlagCloseMainIslands().apply(single_island()).flags == []
+
+
+def test_the_distance_is_between_the_two_largest_islands():
+    mask = np.zeros((SIZE, SIZE, SIZE), dtype=bool)
+    mask[0, 0, :3] = True  # the largest, centred at z=1
+    mask[0, 0, 10:12] = True  # the second largest, centred at z=10.5
+    mask[0, 0, 30] = True  # the smallest, far from both
+    assert Islands(mask, np.eye(4)).two_largest_centroid_distance_mm() == 9.5
