@@ -1,0 +1,23 @@
+# The ridge map run without guides plus vessel dots every 20 px along each vessel, with gpt-6.1-sol. The prompt drops "fades into dots" and "crosses the lung".
+# The vessels come from TotalSegmentator's lung_vessels task, see configs/segment_lung_vessels.yaml.
+# The tracer still runs on the CT.
+out_dir: work/stack_agent/eval40_step3_ridge_vessel_dots20_sol
+prompt: prompts/stack_agent_ridge_vessel_dots_v2.txt
+pictures: {kind: ridge, display_max: 30}  # white from 30 grey levels, about 70 HU
+hint_band_mm: null  # no guides
+vessel_dots: {min_area_px: 4, spacing_px: 20, radius_px: 2, colour: [40, 90, 255]}  # dots along each vessel, at most 20 px apart
+stack_sizes: [5]
+slice_step: 3
+repeats: 2
+stacks:
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 140, vessel_mask: work/vessels/locca_covid_013/lung_vessels.nii.gz}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: axial, centre: 272, vessel_mask: work/vessels/locca_covid_013/lung_vessels.nii.gz}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 184, vessel_mask: work/vessels/locca_covid_013/lung_vessels.nii.gz}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: coronal, centre: 288, vessel_mask: work/vessels/locca_covid_013/lung_vessels.nii.gz}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 164, vessel_mask: work/vessels/locca_covid_013/lung_vessels.nii.gz}
+  - {run_dir: work/scans/locca_covid_013/flex_step4, view: sagittal, centre: 380, vessel_mask: work/vessels/locca_covid_013/lung_vessels.nii.gz}
+  - {run_dir: work/scans/lung_002/flex_step4, view: axial, centre: 116, vessel_mask: work/vessels/lung_002/lung_vessels.nii.gz}
+  - {run_dir: work/scans/lung_002/flex_step4, view: coronal, centre: 212, vessel_mask: work/vessels/lung_002/lung_vessels.nii.gz}
+prices:
+  default: {input: 2.00, cached_input: 0.10, cache_write: 2.50, output: 10.00}
+  flex: {input: 1.00, cached_input: 0.05, cache_write: 1.25, output: 5.00}
