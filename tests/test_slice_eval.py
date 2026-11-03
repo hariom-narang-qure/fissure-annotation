@@ -15,6 +15,11 @@ def test_slices_are_split_into_runs_a_step_apart():
     assert runs_a_step_apart([40, 3, 9, 6, 20, 23], step=3) == [[3, 6, 9], [20, 23], [40]]
 
 
+def test_interleaved_slices_join_the_run_a_step_before_them():
+    assert runs_a_step_apart([1, 2, 3, 4, 5, 6, 7], step=3) == [[1, 4, 7], [2, 5], [3, 6]]
+    assert [scored for _, scored in stacks_for([1, 2, 3, 4, 5, 6, 7], step=3, size=5, slice_count=100)] == [[1, 4, 7], [2, 5], [3, 6]]
+
+
 def test_a_short_batch_is_padded_with_neighbours_on_both_sides():
     assert pad_short_batch([200], step=3, size=5, slice_count=400) == [194, 197, 200, 203, 206]
     assert pad_short_batch([20, 23], step=3, size=5, slice_count=400) == [17, 20, 23, 26, 29]

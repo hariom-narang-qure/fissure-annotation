@@ -70,21 +70,21 @@ class EvalStack(BaseModel):
 
 
 def runs_a_step_apart(indices: list[int], step: int) -> list[list[int]]:
-    """the slices split wherever a slice is not exactly `step` after the one before it
+    """the slices grouped into runs, where each slice of a run is exactly `step` after the one before it
 
         runs_a_step_apart([3, 6, 9, 20, 23, 40], step=3) == [[3, 6, 9], [20, 23], [40]]
+        runs_a_step_apart([1, 2, 3, 4, 5, 6, 7], step=3) == [[1, 4, 7], [2, 5], [3, 6]]
 
-    The slices are sorted first, so a slice can only continue the run just before it.
-    Every earlier run ended before that one started, so only the last slice of the last run is checked.
+    How:
+    - The slices are taken in order. Each one joins the run whose last slice is `step` before it, or starts a new run.
+    - Runs are kept by their last slice, so that lookup is one dict access.
     """
-    runs: list[list[int]] = []
+    run_ending_at: dict[int, list[int]] = {}
     for index in sorted(indices):
-        continues_the_last_run = bool(runs) and index == runs[-1][-1] + step
-        if continues_the_last_run:
-            runs[-1].append(index)
-        else:
-            runs.append([index])
-    return runs
+        run = run_ending_at.pop(index - step, [])
+        run.append(index)
+        run_ending_at[index] = run
+    return sorted(run_ending_at.values())
 
 
 def pad_short_batch(batch: list[int], step: int, size: int, slice_count: int) -> list[int]:
