@@ -6,11 +6,11 @@ from fissure_annotation.imaging.lobes import LEFT_LOWER, LEFT_UPPER
 from fissure_annotation.island_rules import DropSmallIslands
 from fissure_annotation.postprocess import (
     PostProcessJob,
+    PostProcessReport,
     SheetSettings,
     post_process_fissure_masks,
     sheet_parameters,
 )
-from fissure_annotation.postprocess_report import PostProcessReport
 from fissure_annotation.segmentation import LUNG_LOBES
 
 SIZE = 40
@@ -79,7 +79,7 @@ def test_a_line_outside_the_lungs_is_removed_and_the_rest_becomes_a_sheet(tmp_pa
 
     post_process_fissure_masks(job)
 
-    removed, sheet = removed_by(job, "lines_outside_lungs"), load(job.sheet_path)
+    removed, sheet = removed_by(job, "lines_outside_lungs_axial"), load(job.sheet_path)
     assert (removed == far_line()).all()
     assert sheet.sum() > 0 and abs(np.nonzero(sheet)[0] - BOUNDARY_X).max() <= 1
 
@@ -100,7 +100,8 @@ def test_the_views_are_cleaned_on_their_own_and_blended_into_one_sheet(tmp_path)
 
     sheet = load(job.sheet_path)
     assert sheet[:, 8:17].any() and sheet[:, 23:32].any()  # both views are in the sheet
-    assert (removed_by(job, "lines_outside_lungs") == far_line()).all()
+    assert (removed_by(job, "lines_outside_lungs_coronal") == far_line()).all()
+    assert not removed_by(job, "lines_outside_lungs_axial").any()
 
 
 def test_masks_on_another_grid_than_the_lobes_are_refused(tmp_path):
@@ -222,7 +223,7 @@ def test_a_line_inside_the_lungs_is_kept_however_far_it_is_from_the_lobe_boundar
 
     post_process_fissure_masks(job, FakeSegmenter())
 
-    removed = removed_by(job, "lines_outside_lungs")
+    removed = removed_by(job, "lines_outside_lungs_axial")
     assert removed[FAR_X, 20, 5:35].all() and not removed[INSIDE_FAR_X].any()
 
 
@@ -253,4 +254,4 @@ def test_the_report_names_a_label_for_every_step_in_the_order_they_ran(tmp_path)
     job = job_for(tmp_path, ["axial"]).model_copy(update={"island_rules": [DropSmallIslands()]})
     post_process_fissure_masks(job, FakeSegmenter())
     legend = [(removal.label, removal.step) for removal in read_report(job).removed]
-    assert legend == [(1, "lines_outside_lungs"), (2, "small_pieces"), (3, "drop_small_islands")]
+    assert legend == [(1, "lines_outside_lungs_axial"), (2, "small_pieces"), (3, "drop_small_islands")]

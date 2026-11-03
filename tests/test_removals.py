@@ -1,6 +1,6 @@
 import numpy as np
 
-from fissure_annotation.postprocess_report import RemovedVoxels
+from fissure_annotation.removals import RemovedVoxels
 
 
 def voxels(*xs):

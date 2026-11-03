@@ -2,6 +2,7 @@ import numpy as np
 
 from fissure_annotation.island_rules import DropSmallIslands, apply_island_rules
 from fissure_annotation.imaging.islands import Islands
+from fissure_annotation.removals import RemovedVoxels
 
 SIZE = 40
 
@@ -29,15 +30,17 @@ def test_dropping_from_an_empty_sheet_keeps_it_empty():
 
 def test_the_report_has_the_sizes_before_and_after_and_the_removed_mask():
     sheet = sheet_of_blocks((1000, 0), (600, 10), (20, 20))
-    trimmed = apply_island_rules([DropSmallIslands()], sheet, np.eye(4))
+    removed = RemovedVoxels(sheet.shape)
+    trimmed = apply_island_rules([DropSmallIslands()], sheet, np.eye(4), removed)
     assert trimmed.report.island_voxels_before == [1000, 600, 20]
     assert trimmed.report.island_voxels_after == [1000, 600]
-    assert [removal.rule for removal in trimmed.removals] == ["drop_small_islands"]
-    assert (trimmed.removals[0].removed == sheet_of_blocks((20, 20))).all()
+    assert [step.step for step in removed.steps] == ["drop_small_islands"]
+    assert ((removed.labels == 1) == sheet_of_blocks((20, 20))).all()
     assert not trimmed.report.needs_review
 
 
 def test_no_rules_keep_the_sheet_as_it_is():
     sheet = sheet_of_blocks((1000, 0), (20, 20))
-    trimmed = apply_island_rules([], sheet, np.eye(4))
-    assert (trimmed.kept == sheet).all() and trimmed.removals == []
+    removed = RemovedVoxels(sheet.shape)
+    trimmed = apply_island_rules([], sheet, np.eye(4), removed)
+    assert (trimmed.kept == sheet).all() and removed.steps == []

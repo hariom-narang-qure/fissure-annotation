@@ -17,7 +17,8 @@ How:
 5. Pieces of the sheet under `min_piece_voxels` are dropped.
    - They are stubs and specks left over from lines that only one view traced, and a fissure is a large surface.
 6. The island rules trim what is left, or flag the scan for review (`island_rules.py`).
-7. Everything removed is saved as one label map, `removed.nii.gz`, with a label per step (`postprocess_report.py`).
+7. Everything removed is saved as one label map, `removed.nii.gz`, with a label per step (`removals.py`).
+   - The lines outside the lungs are a step per view.
    - `report.json` has the legend of the labels, the island sizes and the review flags.
    - Both sit in the scan's output folder, next to `sheet.nii.gz`.
 
@@ -45,7 +46,7 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 from jaxtyping import Bool, UInt8
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from fissure_annotation.fissure_mask import view_mask_path
 from fissure_annotation.imaging.lines import (
@@ -62,12 +63,12 @@ from fissure_annotation.imaging.sheet import (
 )
 from fissure_annotation.imaging.slices import View
 from fissure_annotation.island_rules import (
+    IslandReport,
     IslandRule,
-    TrimmedSheet,
     apply_island_rules,
     default_island_rules,
 )
-from fissure_annotation.postprocess_report import PostProcessReport, RemovedVoxels
+from fissure_annotation.removals import RemovalStep, RemovedVoxels
 from fissure_annotation.segmentation import (
     LUNG_LOBES,
     Segmenter,
@@ -94,6 +95,20 @@ class SheetSettings(ExperimentSettings):
     min_strength: float | None = (
         None  # of the density of a full one voxel plane, lines and specks stay under it
     )
+
+
+class PostProcessReport(BaseModel):
+    "everything the post-process did to one scan, saved as report.json in the scan's folder"
+
+    removed: list[RemovalStep]  # the legend of removed.nii.gz
+    islands: IslandReport
+
+    @property
+    def needs_review(self) -> bool:
+        return self.islands.needs_review
+
+    def label_of(self, step: str) -> int:
+        return next(removal.label for removal in self.removed if removal.step == step)
 
 
 class PostProcessJob(ExperimentSettings):
@@ -183,33 +198,25 @@ def post_process_fissure_masks(
     )
     lobes = segmented_lobes(job, segmenter)
     near_lungs = near_the_lungs(lobes, job.lung_margin_mm)
-    kept_masks, removed_masks = [], []
+    removed = RemovedVoxels(lobes.shape)
+    kept_masks = []
     for view in job.views:
         path = view_mask_path(job.mask_path, view)
         mask, image = read_mask(path)
         require_same_grid(lobes, image, path.name)
-        kept, removed = keep_lines_mostly_inside(mask, near_lungs, job.min_share_inside)
+        kept, lines_outside = keep_lines_mostly_inside(mask, near_lungs, job.min_share_inside)
+        removed.add(f"lines_outside_lungs_{view}", lines_outside)
         kept_masks.append(kept)
-        removed_masks.append(removed)
     sheet = oriented_sheet(
         np.logical_or.reduce(kept_masks),
         **sheet_parameters(job.sheet, job.slice_step),
     )
     sheet, small_pieces = keep_large_pieces(sheet, job.min_piece_voxels)
-    trimmed = apply_island_rules(job.island_rules, sheet, image.affine)
-    removed = removed_by_step(np.logical_or.reduce(removed_masks), small_pieces, trimmed)
+    removed.add("small_pieces", small_pieces)
+    trimmed = apply_island_rules(job.island_rules, sheet, image.affine, removed)
     write_mask_like(removed.labels, image, job.removed_path)
     report = PostProcessReport(removed=removed.steps, islands=trimmed.report)
     job.report_path.write_text(report.model_dump_json(indent=2))
     write_mask_like(trimmed.kept, image, job.sheet_path)
     return job.sheet_path
 
-
-def removed_by_step(lines_outside: VoxelMask, small_pieces: VoxelMask, trimmed: TrimmedSheet) -> RemovedVoxels:
-    "in the order the steps ran, which decides the label of each step"
-    removed = RemovedVoxels(lines_outside.shape)
-    removed.add("lines_outside_lungs", lines_outside)
-    removed.add("small_pieces", small_pieces)
-    for removal in trimmed.removals:
-        removed.add(removal.rule, removal.removed)
-    return removed

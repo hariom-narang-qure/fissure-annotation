@@ -16,7 +16,7 @@ How:
   - A flagging rule returns the islands unchanged, plus flags.
 - The rules run in the order of the config, each on what the previous one kept.
 - Flags never change the sheet. They name a scan a person should look at, and why.
-- What each rule removed is kept apart, so the report can say which rule removed which voxels.
+- Each rule adds what it removed to the removed voxels as it runs, under its own label.
 - A new rule is a new class added to `IslandRule`, and to the config. No other code changes.
 """
 
@@ -27,6 +27,7 @@ from jaxtyping import Bool, Float
 from pydantic import BaseModel, ConfigDict, Field
 
 from fissure_annotation.imaging.islands import Islands
+from fissure_annotation.removals import RemovedVoxels
 
 
 class ReviewFlag(BaseModel):
@@ -76,16 +77,9 @@ class IslandReport(BaseModel):
         return bool(self.flags)
 
 
-class RuleRemoval:
-    def __init__(self, rule: str, removed: Bool[np.ndarray, "x y z"]):
-        self.rule = rule
-        self.removed = removed
-
-
 class TrimmedSheet:
-    def __init__(self, kept: Bool[np.ndarray, "x y z"], removals: list[RuleRemoval], report: IslandReport):
+    def __init__(self, kept: Bool[np.ndarray, "x y z"], report: IslandReport):
         self.kept = kept
-        self.removals = removals  # one per rule, in the order they ran
         self.report = report
 
 
@@ -93,12 +87,13 @@ def apply_island_rules(
     rules: list[IslandRule],
     sheet: Bool[np.ndarray, "x y z"],
     affine: Float[np.ndarray, "4 4"],
+    removed: RemovedVoxels,
 ) -> TrimmedSheet:
     before = Islands(sheet, affine)
-    islands, flags, removals = before, [], []
+    islands, flags = before, []
     for rule in rules:
         outcome = rule.apply(islands)
-        removals.append(RuleRemoval(rule.kind, islands.mask & ~outcome.kept.mask))
+        removed.add(rule.kind, islands.mask & ~outcome.kept.mask)
         islands = outcome.kept
         flags += outcome.flags
     report = IslandReport(
@@ -106,4 +101,4 @@ def apply_island_rules(
         island_voxels_after=islands.sizes.tolist(),
         flags=flags,
     )
-    return TrimmedSheet(islands.mask, removals, report)
+    return TrimmedSheet(islands.mask, report)
