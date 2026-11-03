@@ -4,8 +4,13 @@
 - Waypoints are saved before they are traced, so every run keeps the model's own decision next to the trace.
 - Uses the Responses API, because chat completions refuse function tools while reasoning is on for gpt-6.1-sol.
 - Images inside tool results work on the Responses API, so a zoom comes back as the tool's own output.
-- The model is reached through Portkey, or straight through OpenAI, see `provider`.
+- The model is reached through Portkey, OpenRouter, or straight through OpenAI, see `provider`.
   - Portkey names the model with its provider, `@openai/gpt-6.1-sol`, and OpenAI names it alone, `gpt-6.1-sol`.
+  - OpenRouter names it with its maker and no `@`, `openai/gpt-6.1-sol`.
+- A conversation goes on turn by turn, and the provider decides how a turn reaches the model (`turns_for`).
+  - OpenAI and Portkey keep each response, so a turn sends only the new tool outputs, and `previous_response_id`.
+  - OpenRouter keeps nothing and refuses `previous_response_id`, so every turn resends the whole conversation.
+    - Reasoning items are left out of the resent conversation, since they cannot be sent back without being stored.
 - Each response's usage is kept in the log, with the tier that served it, so the cost of a slice can be priced (pricing.py).
   - Cached input tokens are part of the input tokens, and reasoning tokens part of the output tokens.
 """
@@ -47,7 +52,7 @@ OVERLAY_SCALE = 3
 
 
 class AgentSettings(ExperimentSettings):
-    provider: Literal["portkey", "openai"] = "portkey"  # who the requests go to, see experiment.model_client
+    provider: Literal["portkey", "openai", "openrouter"] = "portkey"  # who the requests go to, see experiment.model_client
     model: str = "@openai/gpt-6.1-sol"
     reasoning_effort: str = "medium"
     max_output_tokens: int = 24000
@@ -68,6 +73,8 @@ class AgentSettings(ExperimentSettings):
         "a Portkey model name sent to OpenAI is refused only after the run starts, so it is caught here"
         if self.provider == "openai" and self.model.startswith("@"):
             raise ValueError(f"OpenAI names models without a provider, use {self.model.split('/')[-1]!r}")
+        if self.provider == "openrouter" and self.model.startswith("@"):
+            raise ValueError(f"OpenRouter names models without an @, use {self.model.removeprefix('@')!r}")
         return self
 
     def overlay_box_for(self, shape: tuple[int, int]) -> Box:
@@ -229,6 +236,43 @@ def create_response(
     )
 
 
+class ChainedTurns:
+    "the provider keeps each response, so a turn points at the one before"
+
+    def __init__(self, first_input: list[dict]):
+        self.first_input = first_input
+
+    def first(self) -> dict:
+        return {"input": self.first_input}
+
+    def next(self, response, outputs: list[dict]) -> dict:
+        return {"previous_response_id": response.id, "input": outputs}
+
+
+def as_input_item(item) -> dict:
+    "an output item of the SDK is a pydantic model, a test's fake is a plain namespace"
+    return item.model_dump(exclude_none=True) if hasattr(item, "model_dump") else dict(vars(item))
+
+
+class ReplayedTurns:
+    "the provider keeps nothing, so every turn resends the conversation so far"
+
+    def __init__(self, first_input: list[dict]):
+        self.history = list(first_input)
+
+    def first(self) -> dict:
+        return {"input": list(self.history)}
+
+    def next(self, response, outputs: list[dict]) -> dict:
+        self.history += [as_input_item(item) for item in response.output if item.type != "reasoning"]
+        self.history += outputs
+        return {"input": list(self.history)}
+
+
+def turns_for(settings: AgentSettings, first_input: list[dict]) -> ChainedTurns | ReplayedTurns:
+    return ReplayedTurns(first_input) if settings.provider == "openrouter" else ChainedTurns(first_input)
+
+
 def first_input(session: SliceSession) -> list[dict]:
     height, width = session.image.shape
     description = f"{session.settings.view.capitalize()} slice {session.slice_index}, {width}x{height} px."
@@ -257,7 +301,8 @@ def run_slice(
         output_tokens=0,
         calls=[],
     )
-    response = create_response(client, settings, slice_index, input=first_input(session))
+    turns = turns_for(settings, first_input(session))
+    response = create_response(client, settings, slice_index, **turns.first())
     for step in range(settings.max_steps):
         log.steps = step + 1
         log.input_tokens += response.usage.input_tokens
@@ -283,9 +328,7 @@ def run_slice(
             )
         if log.summary is not None:
             break
-        response = create_response(
-            client, settings, slice_index, previous_response_id=response.id, input=outputs
-        )
+        response = create_response(client, settings, slice_index, **turns.next(response, outputs))
     log.traces = session.traces
     folder.log_path(session.slice_png).parent.mkdir(parents=True, exist_ok=True)
     folder.log_path(session.slice_png).write_text(log.model_dump_json(indent=1))

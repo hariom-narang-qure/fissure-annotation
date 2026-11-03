@@ -9,7 +9,9 @@ Then try a few scans before the whole list:
     uv run --env-file .env python scripts/run_scan_list.py --config configs/pipeline_terra_ridge_step3.yaml --limit 2
 
 Needs in the environment, for the model calls (not for the plan):
-- PORTKEY_API_KEY, or OPENAI_API_KEY with agent.provider set to openai, which `--env-file .env` provides.
+- PORTKEY_API_KEY, which `--env-file .env` provides.
+- Or OPENAI_API_KEY with `--agent.provider openai --agent.model gpt-6.1-terra`.
+- Or OPENROUTER_API_KEY with `--agent.provider openrouter --agent.model openai/gpt-6.1-terra`.
 """
 
 import sys

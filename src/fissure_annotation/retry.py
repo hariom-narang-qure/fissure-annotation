@@ -3,7 +3,7 @@
 | Policy | Matches | Does | Gives up |
 |---|---|---|---|
 | `wait_for_flex_capacity` | 429 `flex_unavailable` | waits `capacity_wait_seconds`, again and again | never |
-| `wait_for_credit` | an empty balance or a spend limit | waits `credit_wait_seconds`, doubling up to `credit_max_wait_seconds` | never |
+| `wait_for_credit` | an empty balance or a spend limit, or a 402 | waits `credit_wait_seconds`, doubling up to `credit_max_wait_seconds` | never |
 | `retry_transient_errors` | 408, any other 429, 5xx, a lost connection | waits `retry_wait_seconds`, doubling with jitter up to 60 s | after `retries` retries, then raises |
 
 Why:
@@ -48,6 +48,7 @@ from tenacity import (
 )
 
 RETRIED_STATUS_CODES = frozenset({408, 429})
+OUT_OF_CREDIT_STATUS = 402  # OpenRouter answers 402 Payment Required when its credits run out
 RETRIED_ERROR_NAMES = frozenset({"APIConnectionError", "APITimeoutError"})
 NO_CAPACITY_CODE = "flex_unavailable"
 OUT_OF_CREDIT_CODES = frozenset({"insufficient_quota", "credit_balance_exhausted", "organization_spend_limit_exceeded"})
@@ -102,6 +103,8 @@ def is_out_of_capacity(error: BaseException) -> bool:
 def is_out_of_credit(error: BaseException) -> bool:
     "OpenAI puts insufficient_quota in the type and the reason in the code, so both are checked, and the message for a proxy"
     codes = {getattr(error, "code", None), getattr(error, "type", None)}
+    if getattr(error, "status_code", None) == OUT_OF_CREDIT_STATUS:
+        return True
     return bool(codes & OUT_OF_CREDIT_CODES) or any(code in str(error) for code in OUT_OF_CREDIT_CODES)
 
 

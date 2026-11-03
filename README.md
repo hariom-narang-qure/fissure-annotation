@@ -17,6 +17,7 @@ Research only, not diagnostic.
     uv run --env-file .env python scripts/run_waypoint_agent.py --config configs/waypoint_agent.yaml
 
 - `.env` needs `PORTKEY_API_KEY` (see `.env.example`).
+  - `OPENROUTER_API_KEY` is needed only for runs with `agent.provider: openrouter`.
 - Flags go on top of the YAML, for example `--agent.max-steps 20` or `--first-slice 160 --last-slice 170`.
 - Output goes under `out_dir`: `points/` (the model's waypoints), `masks/`, `overlays/`, `logs/` and `contact_sheet.png`.
 

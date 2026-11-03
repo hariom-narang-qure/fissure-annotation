@@ -37,6 +37,7 @@ from fissure_annotation.agent import (
     create_response,
     image,
     text,
+    turns_for,
     usage_of,
 )
 from fissure_annotation.imaging.overlay import red_overlay
@@ -189,7 +190,8 @@ def run_stack(
         centre = slice_indices[len(slice_indices) // 2]
         return create_response(client, settings, centre, instructions=instructions, tools=STACK_TOOLS, **request)
 
-    response = respond(input=first_input(session))
+    turns = turns_for(settings, first_input(session))
+    response = respond(**turns.first())
     for step in range(settings.max_steps):
         log.steps = step + 1
         log.input_tokens += response.usage.input_tokens
@@ -213,7 +215,7 @@ def run_stack(
             )
         if log.summary is not None:
             break
-        response = respond(previous_response_id=response.id, input=outputs)
+        response = respond(**turns.next(response, outputs))
     log.traces = session.traces
     path = folder.stack_log_path(slice_indices)
     path.parent.mkdir(parents=True, exist_ok=True)

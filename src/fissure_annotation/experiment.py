@@ -75,8 +75,22 @@ def openai_client() -> OpenAI:
     return OpenAI(api_key=os.environ["OPENAI_API_KEY"], max_retries=0, timeout=FLEX_TIMEOUT_SECONDS)
 
 
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+
+def openrouter_client() -> OpenAI:
+    "OpenRouter speaks the OpenAI API, so the OpenAI client is pointed at it"
+    return OpenAI(
+        api_key=os.environ["OPENROUTER_API_KEY"],
+        base_url=OPENROUTER_BASE_URL,
+        max_retries=0,
+        timeout=FLEX_TIMEOUT_SECONDS,
+    )
+
+
 def model_client(agent: AgentSettings) -> Portkey | OpenAI:
-    return openai_client() if agent.provider == "openai" else portkey_client()
+    clients = {"openai": openai_client, "openrouter": openrouter_client, "portkey": portkey_client}
+    return clients[agent.provider]()
 
 
 def run_slices(config: WaypointExperiment, client) -> list[SliceLog]:
