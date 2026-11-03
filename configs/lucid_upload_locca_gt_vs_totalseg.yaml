@@ -1,0 +1,16 @@
+# The 10 LOCCA cases with the manual lobes and the TotalSegmentator (v2.18.0) lobes in the same case, to compare them in the viewer.
+# Each mask holds all 5 lobes, with the TotalSegmentator ids 10..14.
+# The boundary bands are the lobe labels within 5 mm of a lobe border in either mask, the region of the boundary Dice.
+# The full masks of the two overlap almost everywhere, which may hit the viewer problem with overlapping masks in one case.
+# LOCCA has no radiologist reports, so there is no report finding.
+csv: configs/locca_eval_cases.csv
+uid_column: case_id
+out_root: work/datasets/locca/nifti
+project_slug: hariom-lobe-gt-vs-totalseg
+project_name: "(Hariom) Lobe Segmentation GT vs TotalSegmentator"
+# the name in the viewer, and the file inside the folder of each case
+findings:
+  gt_lobes: lobes.nii.gz
+  ts_lobes: totalseg_lobes.nii.gz
+  gt_boundary_band: gt_boundary_band.nii.gz
+  ts_boundary_band: ts_boundary_band.nii.gz

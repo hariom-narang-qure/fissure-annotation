@@ -1,0 +1,16 @@
+# The TotalSegmentator (v2.18.0) lobes of the 10 LOCCA cases in lucid_upload_locca.yaml, to compare with the manual lobes in the viewer.
+# Each case is uploaded again as its own case, `<case>_totalseg`, next to the ground truth case.
+# The masks are not added to the ground truth case, since the viewer did not draw one of two overlapping masks in a case.
+csv: configs/locca_eval_cases.csv
+uid_column: case_id
+out_root: work/datasets/locca/nifti
+series_suffix: _totalseg
+project_slug: hariom-lobe-segmentation-gt-evals
+project_name: "(Hariom) Lobe Segmentation Ground Truth Evals"
+# the name in the viewer, and the file inside the folder of each case
+findings:
+  totalseg_lung_upper_lobe_left: totalseg_lung_upper_lobe_left.nii.gz
+  totalseg_lung_lower_lobe_left: totalseg_lung_lower_lobe_left.nii.gz
+  totalseg_lung_upper_lobe_right: totalseg_lung_upper_lobe_right.nii.gz
+  totalseg_lung_middle_lobe_right: totalseg_lung_middle_lobe_right.nii.gz
+  totalseg_lung_lower_lobe_right: totalseg_lung_lower_lobe_right.nii.gz

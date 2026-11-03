@@ -1,0 +1,21 @@
+# The new dashboard CT cases from ~/CTs, with the current pipeline: gpt-6.1-terra, the stack agent on the ridge map, no lobe guides, slices 3 apart.
+# Same settings as emphysema_severe50_terra_ridge_step3.yaml. Only the scans differ.
+# The scans are linked into work/datasets/new_cts/store in the qmuse store layout, named dashboard_case<N>.
+csv: configs/new_cts_case1.csv
+scans_dir: /home/hariom.narang/fissure-annotation/work/datasets/new_cts/store
+out_root: work/scans
+run_name: terra_ridge_step3
+slice_step: 3
+views: [axial, coronal, sagittal]
+workers: 8  # stacks in flight, each with 5 slices
+agent:
+  model: "@openai/gpt-6.1-terra"
+annotator:
+  kind: stack
+  size: 5
+  hint_band_mm: null  # no guides
+  prompt: prompts/stack_agent_ridge_terra.txt
+  pictures: {kind: ridge, display_max: 20}
+totalsegmentator:
+  command: [/home/hariom.narang/fissure-work-bak/1.2.392.200036.9116.2.6.1.54365.1690017023.1783390643.994211/fusion/tools/ts_venv/bin/python, -m, totalsegmentator.bin.TotalSegmentator]
+  gpu_index: 0

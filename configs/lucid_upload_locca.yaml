@@ -1,0 +1,16 @@
+# 10 LOCCA cases with their manual lobe masks, to check the lobe ground truth in the viewer. The S3 prefix comes from $SALVO_BUCKET_PREFIX.
+# The cases are 5 COVID and 5 cancer, sampled with random.Random(0) from work/datasets/locca/nifti.
+# Each lobe is its own binary mask, so each lobe is a separate finding in the viewer.
+# The lobes do not overlap, so the viewer's problem with overlapping masks in one case does not apply.
+csv: configs/locca_eval_cases.csv
+uid_column: case_id
+out_root: work/datasets/locca/nifti
+project_slug: hariom-lobe-segmentation-gt-evals
+project_name: "(Hariom) Lobe Segmentation Ground Truth Evals"
+# the name in the viewer, and the file inside the folder of each case
+findings:
+  lung_upper_lobe_left: lung_upper_lobe_left.nii.gz
+  lung_lower_lobe_left: lung_lower_lobe_left.nii.gz
+  lung_upper_lobe_right: lung_upper_lobe_right.nii.gz
+  lung_middle_lobe_right: lung_middle_lobe_right.nii.gz
+  lung_lower_lobe_right: lung_lower_lobe_right.nii.gz

@@ -1,0 +1,11 @@
+# All 19 scans with a full step-4 flex run, each with its fissure sheet and its radiologist report. The S3 prefix comes from $SALVO_BUCKET_PREFIX.
+# The reports are copied from the report column of minimal_scan_list.csv.
+csv: configs/flex_step4_scans.csv
+out_root: work/scans
+run_name: flex_step4
+project_slug: hariom-fissure-segmentation
+project_name: "(Hariom) Fissure segmentation"
+series_suffix: .flex_step4
+report_column: report
+findings:
+  fissure_sheet: post/sheet.nii.gz

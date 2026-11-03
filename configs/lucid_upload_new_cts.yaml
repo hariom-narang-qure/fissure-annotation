@@ -1,0 +1,10 @@
+# The 5 new dashboard CT cases from ~/CTs, with their terra fissure sheets (ridge map, no guides, slices 3 apart).
+# The cases have no radiologist report, so there is no report finding. The S3 prefix comes from $SALVO_BUCKET_PREFIX.
+csv: configs/new_cts_all.csv
+out_root: work/scans
+run_name: terra_ridge_step3
+project_slug: hariom-fissure-intuitive
+project_name: hariom-fissure-intuitive
+series_suffix: .terra_ridge_step3
+findings:
+  fissure_sheet: post/sheet.nii.gz

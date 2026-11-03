@@ -1,0 +1,10 @@
+# One severe centrilobular emphysema scan with a collapsed right lower lobe: the terra fissure sheet (ridge map, no guides, slices 3 apart).
+# The scan comes from the emphysema severity annotations, which have no radiologist report, so there is no report finding.
+csv: configs/lucid_one_emph529390.csv
+out_root: work/scans
+run_name: terra_ridge_step3
+project_slug: hariom-fissure-segmentation
+project_name: "(Hariom) Fissure segmentation"
+series_suffix: .terra_ridge_step3
+findings:
+  fissure_sheet: post/sheet.nii.gz
